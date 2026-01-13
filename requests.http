@@ -1,0 +1,183 @@
+### Create User (Signup) - Simple Plain Password
+POST http://localhost:4000/api/auth/signup
+Content-Type: application/json
+
+{
+  # "id": "ebb4dc92-b037-4aac-abf3-06187a8ee5c7",
+  "email": "dorian@x.com",
+  "username": "Dorian Yates",
+  "password": "tren",
+  "flag": "N",
+  "role": "mentor"
+}
+
+### Find User by Username
+POST https://localhost:4000/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "dorian@x.com",
+  "password": "tren"
+}
+
+### Find User by Username
+POST https://localhost:4000/api/auth/find
+Content-Type: application/json
+
+{
+  
+  "id": "542ffd48-43ed-4b37-814c-a587893954c6"
+}
+
+### Logout
+POST https://localhost:4000/api/auth/logout
+Content-Type: application/json
+
+{
+  
+}
+
+### Find User by Username
+GET https://localhost:4000/api/auth/verify
+Content-Type: application/json
+
+{
+  
+  
+}
+
+### 
+POST http://localhost:4000/api/auth/create-session
+Content-Type: application/json
+
+{
+  "mentor_id": "dd3cde25-4a8e-43a0-a446-5317b66c35db",
+  "title": "Introduct",
+  "description": "Learn t.",
+  "topic": "web-devement",
+  "duration": 60,
+  "max_participants": 10,
+  "format": "virtual",
+  "prerequisites": "Basic com.",
+  "materials": "A laptop ed.",
+  "skill_level": "beginner",
+  "session_type": "scheduled",
+  "start_time": "2023-10-15T14:00:00",
+  "end_time": "2023-10-15T15:00:00"
+  
+}
+
+### Find Session
+POST http://localhost:4000/api/auth/fetch-session
+Content-Type: application/json
+
+{
+  "session_id": "",
+  "mentor_id" : "dd3cde25-4a8e-43a0-a446-5317b66c35db"
+}
+
+###
+POST http://localhost:4000/api/auth/fetch-session
+Content-Type: application/json
+
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjQ0ZWNiOTUwLTM3OTMtNDk2My1iNTJkLTc3NmFiZWQzMTZkNSIsInVzZXJuYW1lIjoieWF0ZXMiLCJlbWFpbCI6ImRvcmlhbkB4LmNvbSIsInJvbGUiOiJtZW50b3IiLCJpYXQiOjE3NDMxNjM1MTksImV4cCI6MTc0MzE2NzExOX0.712CCzslmAEcrgBjw2D1wRfmQYoLGwKZF_rK6B-1deE"
+}
+
+###
+POST https://localhost:4000/api/auth/fetch-session-by-mentor
+Content-Type: application/json
+
+{
+  "mentor_id": "9f02aa27-a816-45c9-9c7f-b735a3abe0d4"
+}
+
+###
+POST https://localhost:4000/api/auth/follow
+Content-Type: application/json
+
+{
+  "mentorId": "dd3cde25-4a8e-43a0-a446-5317b66c35db"
+}
+
+###
+POST https://localhost:4000/api/auth/follow/accept
+Content-Type: application/json
+
+{
+  "userId": "6f178e79-1c2d-4174-97c3-4686fc679261"
+}
+
+
+###
+POST https://localhost:4000/api/auth/follow
+Content-Type: application/json
+
+{
+  "mentorId": "dd3cde25-4a8e-43a0-a446-5317b66c35db"
+}
+
+###
+POST https://localhost:4000/api/auth/follow
+Content-Type: application/json
+
+{
+  "conversation_id": "dd3cde25-4a8e-43a0-a446-5317b66c35db"
+}
+
+###
+POST https://localhost:4000/api/auth/onboard
+Content-Type: application/json
+
+{
+  "role": "mentor",
+  "firstName": "Dorian",
+  "lastName": "Yates",
+  "phone": "9876543210",
+  "dob": "1997-06-15",
+  "location": "Pune",
+  "avatar": "https://cdn/avatar.png",
+  "bio": "Experienced Java & AWS Mentor",
+  "currRole": null,
+  "careerGoals": null,
+  "skillsToImprove": null,
+  "mentorPreferences": null,
+  "additionalInfo": "Open to mentoring in evenings",
+  "experiences": [
+    {
+      "company": "JP Morgan",
+      "position": "Ops Analyst",
+      "startDate": "2022-01-01",
+      "endDate": "2024-12-31",
+      "currentlyWorking": false,
+      "description": "Worked in operations and backend systems"
+    }
+  ],
+  "educations": [
+    {
+      "institution": "Amity University",
+      "degree": "BCA",
+      "fieldOfStudy": "Computer Applications",
+      "startYear": "2017",
+      "endYear": "2020",
+      "description": "Graduated with distinction"
+    }
+  ],
+  "socialLinks": [
+    {
+      "platform": "LinkedIn",
+      "link": "https://linkedin.com/in/aditya"
+    }
+  ]
+}
+
+
+
+
+###
+POST https://localhost:4000/api/auth/check-email
+Content-Type: application/json
+
+{
+  "email": "v@x.com"
+}
