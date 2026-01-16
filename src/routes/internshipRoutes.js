@@ -3,6 +3,10 @@ const { protect } = require("../middleware/auth.js");
 
 const {
   createInternship,
+  createMilestone,
+  createConcept,
+  createTask,
+  createAssignment,
   getAllInternships,
   getInternshipById,
   updateInternship,
@@ -15,7 +19,22 @@ const {
   getJoinedInternships,
   getOngoingInternships,
   getCurrentMentorInternships,
-  getCurrentRequestedInternships
+  getScheduledMentorInternships,
+  getOngoingMentorInternships,
+  getCurrentRequestedInternships,
+  submitCohostDomain,
+  respondCohostInvite,
+  getInternshipsByStatus,
+  getCurrentMentorWorkboard,
+  getInternWorkboard,
+  getDomainInterns,
+  upsertConceptProgress,
+  upsertTaskProgress,
+  getInternPerformance,
+  submitAssignment,
+  gradeAssignment,
+  getAvailableInternshipsForIntern,
+  getOngoingInternshipsWithProgress
 } = require("../controller/internshipController.js");
 
 const router = express.Router();
@@ -24,15 +43,61 @@ const router = express.Router();
 // CRUD
 // -------------------------------
 router.post("/", protect, createInternship);
+router.post("/workboards/:workboardId/milestones", protect, createMilestone);
+router.post("/milestones/:milestoneId/concepts", protect, createConcept);
+router.post("/milestones/:milestoneId/tasks", protect, createTask);
+router.post("/milestones/:milestoneId/assignments", protect, createAssignment);
+router.get(
+  "/workboards/current/:internshipId",
+  protect,
+  getCurrentMentorWorkboard
+);
 router.get("/", getAllInternships);
-router.get("/current-mentor-internships", protect, getCurrentMentorInternships);
-router.get("/current-mentor-requested-internships", protect, getCurrentRequestedInternships);
+router.delete("/:internshipId", protect, deleteInternship);
+router.put("/:internshipId", protect, updateInternship);
 
+router.post("/status/:status", protect, getInternshipsByStatus);
+
+router.get("/current-mentor-internships", protect, getCurrentMentorInternships);
+router.get("/current-mentor-scheduled-internships", protect, getScheduledMentorInternships);
+router.get("/current-mentor-ongoing-internships", protect, getOngoingMentorInternships);
+router.get("/current-mentor-requested-internships", protect, getCurrentRequestedInternships);
+router.post("/:internshipId/cohost-domain", protect, submitCohostDomain);
+router.post("/:internshipId/cohost/respond", protect, respondCohostInvite);
+router.post("/:internshipId/accept-and-post", protect, approveAndPost);
+router.post("/:internshipId/cohost-respond", protect, respondCohostInvite);
 
 // -------------------------------
 // INTERN ROUTES (PUT THESE FIRST)
 // -------------------------------
-router.post("/intern/join", joinInternship);
+router.post("/intern/join", protect, joinInternship);
+router.get(
+  "/intern/available-internships",
+  protect,
+  getAvailableInternshipsForIntern
+);
+router.get("/intern/workboards/:internshipId", protect, getInternWorkboard);
+router.get(
+  "/intern/ongoing-with-progress",
+  protect,
+  getOngoingInternshipsWithProgress
+);
+router.post(
+  "/intern/concepts/:conceptId/progress",
+  protect,
+  upsertConceptProgress
+);
+router.post("/intern/tasks/:taskId/progress", protect, upsertTaskProgress);
+router.post(
+  "/intern/assignments/:assignmentId/submit",
+  protect,
+  submitAssignment
+);
+router.get(
+  "/intern/performance/:internshipId",
+  protect,
+  getInternPerformance
+);
 router.get("/intern/:internId/joined", getJoinedInternships);
 router.get("/intern/:internId/ongoing", getOngoingInternships);
 
@@ -47,6 +112,16 @@ router.get("/filter/:filter", getInternshipsByFilter);
 router.put("/:id/open-cohost", openForCohost);
 router.put("/:id/send-to-host", sendToHost);
 router.put("/:id/approve-post", approveAndPost);
+router.post(
+  "/mentor/assignments/:assignmentId/grade",
+  protect,
+  gradeAssignment
+);
+router.get(
+  "/:internshipId/domains/:domainName/interns",
+  protect,
+  getDomainInterns
+);
 
 // -------------------------------
 // PARAMETER ROUTES — MUST BE LAST

@@ -10,6 +10,10 @@ const createUserTableQuery =
 
 const SECRET_KEY = process.env.JWT_SECRET;
 
+const safeJson = (value) =>
+  value === undefined || value === null ? JSON.stringify([]) : JSON.stringify(value);
+
+
 const authRepository = {
   createUser: async (email, full_name, password) => {
     try {
@@ -108,18 +112,30 @@ const authRepository = {
         github_link,
         hear_about,
       } = req.body;
-      const updateUserQuery = `UPDATE mentedge.users
-        SET id = $1, full_name = $2, gender = $3, date_of_birth = $4, avatar = $5, phone_number = $6, bio = $7, current_city = $8, current_state = $9, current_status = $10, 
-        resume_link = $11, portfolio_link = $12, linkedin_link = $13, github_link = $14, hear_about = $15
+      const updateUserQuery = `UPDATE mentedge.users SET
+        full_name = $2,
+        gender = $3,
+        date_of_birth = $4,
+        avatar = $5,
+        phone_number = $6,
+        bio = $7,
+        current_city = $8,
+        current_state = $9,
+        current_status = $10,
+        resume_link = $11,
+        portfolio_link = $12,
+        linkedin_link = $13,
+        github_link = $14,
+        hear_about = $15,
+        educations = $16,
+        experience = $17,
+        skills = $18,
+        languages = $19,
+        certificates = $20,
+        interests = $21
         WHERE id = $1
-        RETURNING *`;
-
-      const updateUserEducationQuery = `INSERT INTO mentedge.educations (owner_id, owner_type, highest_degree, institution, field_of_study, graduation_year, gpa) VALUES ($1, 'user', $2, $3, $4, $5, $6) RETURNING *`;
-      const updateUserExperienceQuery = `INSERT INTO mentedge.experiences (owner_id, owner_type, title, company, location, experience, industry) VALUES ($1, 'user', $2, $3, $4, $5, $6) RETURNING *`;
-      const updateUserSkillQuery = `INSERT INTO mentedge.skills (owner_id, owner_type, skill) VALUES ($1, 'user', $2) RETURNING *`;
-      const updateUserLanguageQuery = `INSERT INTO mentedge.languages (owner_id, owner_type, language) VALUES ($1, 'user', $2) RETURNING *`;
-      const updateUserCertificateQuery = `INSERT INTO mentedge.certificates (owner_id, owner_type, name, provider, link, start_date, end_date) VALUES ($1, 'user', $2, $3, $4, $5, $6) RETURNING *`;
-      const updateUserInterestQuery = `INSERT INTO mentedge.interests (owner_id, owner_type, interest) VALUES ($1, 'user', $2) RETURNING *`;
+        RETURNING *
+      `;
 
       const result = await db.query({
         text: updateUserQuery,
@@ -139,71 +155,14 @@ const authRepository = {
           linkedin_link,
           github_link,
           hear_about,
+          safeJson(educations),
+          safeJson(experience),
+          safeJson(skills),
+          safeJson(languages),
+          safeJson(certificates),
+          safeJson(interests),
         ],
       });
-
-      for (const education of educations) {
-        await db.query({
-          text: updateUserEducationQuery,
-          values: [
-            id,
-            education.highest_degree,
-            education.institution,
-            education.field_of_study,
-            education.graduation_year,
-            education.gpa,
-          ],
-        });
-      }
-
-      for (const experienceItem of experience) {
-        await db.query({
-          text: updateUserExperienceQuery,
-          values: [
-            id,
-            experienceItem.title,
-            experienceItem.company,
-            experienceItem.location,
-            experienceItem.industry,
-            experienceItem.experience,
-          ],
-        });
-      }
-
-      for (const skill of skills) {
-        await db.query({
-          text: updateUserSkillQuery,
-          values: [id, skill],
-        });
-      }
-
-      for (const language of languages) {
-        await db.query({
-          text: updateUserLanguageQuery,
-          values: [id, language],
-        });
-      }
-
-      for (const certificate of certificates) {
-        await db.query({
-          text: updateUserCertificateQuery,
-          values: [
-            id,
-            certificate.name,
-            certificate.provider,
-            certificate.link,
-            certificate.start_date,
-            certificate.end_date,
-          ],
-        });
-      }
-
-      for (const interest of interests) {
-        await db.query({
-          text: updateUserInterestQuery,
-          values: [id, interest],
-        });
-      }
 
       if (!result.rows[0]) {
         throw new Error("User not found or no changes applied");
@@ -214,6 +173,7 @@ const authRepository = {
           id: result.rows[0].id,
           full_name: result.rows[0].full_name,
           email: result.rows[0].email,
+          avatar: result.rows[0].avatar,
           role: result.rows[0].role,
           gender: result.rows[0].gender,
         },
@@ -353,6 +313,7 @@ const authRepository = {
           id: user.id,
           full_name: user.full_name,
           email: user.email,
+          avatar: user.avatar,
           role: "mentor",
           gender: user.gender,
         },
@@ -365,6 +326,116 @@ const authRepository = {
       return { user: safeUser, token, websocketToken };
     } catch (error) {
       console.error("Error logging in mentor:", error.message);
+      throw error;
+    }
+  },
+
+  oboardingMentor: async (req) => {
+    try {
+      const { id } = req.user;
+      const {
+        full_name,
+        gender,
+        date_of_birth,
+        avatar,
+        phone_number,
+        bio,
+        current_city,
+        current_state,
+        current_status,
+        educations,
+        experience,
+        skills,
+        languages,
+        certificates,
+        interests,
+        resume_link,
+        portfolio_link,
+        linkedin_link,
+        github_link,
+        hear_about,
+      } = req.body;
+      const updateUserQuery = `UPDATE mentedge.mentors SET
+        full_name = $2,
+        gender = $3,
+        date_of_birth = $4,
+        avatar = $5,
+        phone_number = $6,
+        bio = $7,
+        current_city = $8,
+        current_state = $9,
+        current_status = $10,
+        resume_link = $11,
+        portfolio_link = $12,
+        linkedin_link = $13,
+        github_link = $14,
+        hear_about = $15,
+        educations = $16,
+        experience = $17,
+        skills = $18,
+        languages = $19,
+        certificates = $20,
+        interests = $21
+        WHERE id = $1
+        RETURNING *
+      `;
+
+      const result = await db.query({
+        text: updateUserQuery,
+        values: [
+          id,
+          full_name,
+          gender,
+          date_of_birth,
+          avatar,
+          phone_number,
+          bio,
+          current_city,
+          current_state,
+          current_status,
+          resume_link,
+          portfolio_link,
+          linkedin_link,
+          github_link,
+          hear_about,
+          safeJson(educations),
+          safeJson(experience),
+          safeJson(skills),
+          safeJson(languages),
+          safeJson(certificates),
+          safeJson(interests),
+        ],
+      });
+
+      if (!result.rows[0]) {
+        throw new Error("Mentor not found or no changes applied");
+      }
+
+      const token = jwt.sign(
+        {
+          id: result.rows[0].id,
+          full_name: result.rows[0].full_name,
+          email: result.rows[0].email,
+          avatar: result.rows[0].avatar,
+          role: result.rows[0].role,
+          gender: result.rows[0].gender,
+        },
+        SECRET_KEY,
+        { expiresIn: "30d" }
+      );
+      const websocketToken = await websocketTokenService.generateToken(
+        result.rows[0].id
+      );
+
+      return {
+        resultStatus: "Success",
+        resultContent: result.rows[0],
+        resultMessage: "Mentor onboarded successfully",
+        token,
+        websocketToken,
+      };
+    } catch (error) {
+      console.error("Error updating mentor:", error.message);
       throw error;
     }
   },
@@ -428,15 +499,20 @@ const authRepository = {
       throw error;
     }
   },
-  
-  findMentors: async ({ id, email, full_name }) => {
+
+  findMentors: async ({ id, email, full_name, excludeId }) => {
     try {
       console.log(full_name, email, id);
-      const findMentorQuery = `SELECT * FROM mentedge.mentors WHERE id = $1 OR email = $2 OR full_name ILIKE '%' || $3 || '%'`;
+      const findMentorQuery = `
+        SELECT *
+        FROM mentedge.mentors
+        WHERE (id = $1 OR email = $2 OR full_name ILIKE '%' || $3 || '%')
+          AND ($4::uuid IS NULL OR id <> $4)
+      `;
 
       const result = await db.query({
         text: findMentorQuery,
-        values: [id, email, full_name],
+        values: [id ?? null, email ?? null, full_name ?? null, excludeId ?? null],
       });
 
       if (result.rowCount === 0) {

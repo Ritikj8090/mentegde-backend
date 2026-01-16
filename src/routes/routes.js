@@ -23,8 +23,6 @@ const { upload } = require("../middleware/uploadProfilePhoto");
 router.post("/signup", authService.createUser);
 router.post("/login", authService.loginUser);
 router.post("/logout", authService.logoutUser);
-
-// User management routes
 router.put("/oboarding-user", protect, authService.oboardingUser);
 router.post("/current-user", protect, authService.getCurrentUser);
 router.post("/find", authService.findUser);
@@ -32,6 +30,7 @@ router.post("/find", authService.findUser);
 // Mentor authentication routes
 router.post("/mentor-signup", authService.createMentor);
 router.post("/mentor-login", authService.loginMentor);
+router.put("/oboarding-mentor", protect, authService.oboardingMentor);
 router.post("/find-mentor", authService.findMentor);
 router.post("/find-mentors", authService.findMentors);
 

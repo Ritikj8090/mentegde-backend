@@ -341,10 +341,91 @@ const authService = {
     }
   },
 
+  oboardingMentor: async (req, res) => {
+    try {
+      const {
+        full_name,
+        gender,
+        date_of_birth,
+        avatar,
+        phone_number,
+        bio,
+        current_city,
+        current_state,
+        current_status,
+        educations,
+        experience,
+        skills,
+        languages,
+        certificates,
+        interests,
+        resume_link,
+        portfolio_link,
+        linkedin_link,
+        github_link,
+        hear_about,
+      } = req.body;
+      console.log(req.body);
+      if (
+        !full_name ||
+        !gender ||
+        !date_of_birth ||
+        !phone_number ||
+        !bio ||
+        !current_city ||
+        !current_state ||
+        !current_status ||
+        !educations ||
+        !languages ||
+        !interests ||
+        !resume_link ||
+        !linkedin_link ||
+        !github_link ||
+        !hear_about ||
+        !skills
+      ) {
+        return res.status(400).json({ message: "All fields are required" });
+      }
+      const {token, websocketToken, resultContent, resultMessage} = await authRepository.oboardingMentor(req);
+
+      res.cookie("token", token, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "None",
+        maxAge: 3600000,
+        path: "/",
+      });
+      res
+        .status(200)
+        .json({ message: resultMessage, data: resultContent });
+    } catch (error) {
+      res
+        .status(500)
+        .json({ message: "Error updating mentor: " + error.message });
+    }
+  },
+
   findMentors: async (req, res) => {
     try {
 
-      const {dbUser} = await authRepository.findMentors(req.body);
+      let excludeId = null;
+      if (req.user?.role === "mentor") {
+        excludeId = req.user.id;
+      } else if (req.cookies?.token) {
+        try {
+          const decoded = jwt.verify(req.cookies.token, SECRET_KEY);
+          if (decoded?.role === "mentor") {
+            excludeId = decoded.id;
+          }
+        } catch (error) {
+          excludeId = null;
+        }
+      }
+
+      const {dbUser} = await authRepository.findMentors({
+        ...req.body,
+        excludeId,
+      });
       res.status(200).json({
         data: dbUser,
       });
@@ -352,6 +433,7 @@ const authService = {
       res.status(500).json({ message: error.message });
     }
   },
+
   findMentor: async (req, res) => {
     try {
 
