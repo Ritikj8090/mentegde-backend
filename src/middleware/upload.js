@@ -18,6 +18,21 @@ const storage = new CloudinaryStorage({
       resourceType = "raw"; // ✅ PDFs usually
     }
 
+    if (file.fieldname === "concept_files") {
+      folder = "concept_files";
+      resourceType = file.mimetype?.startsWith("image/") ? "image" : "raw";
+    }
+
+    if (file.fieldname === "assignment_submission_files") {
+      folder = "assignment_submissions";
+      resourceType = file.mimetype?.startsWith("image/") ? "image" : "raw";
+    }
+
+    if (file.fieldname === "assignment_files") {
+      folder = "assignment_files";
+      resourceType = file.mimetype?.startsWith("image/") ? "image" : "raw";
+    }
+
     return {
       folder,
       resource_type: resourceType,
@@ -34,6 +49,8 @@ const fileFilter = (req, file, cb) => {
     "image/png",
     "image/jpg",
     "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ];
 
   if (allowedTypes.includes(file.mimetype)) {

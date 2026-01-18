@@ -1,5 +1,6 @@
 const express = require("express");
 const { protect } = require("../middleware/auth.js");
+const upload = require("../middleware/upload");
 
 const {
   createInternship,
@@ -7,6 +8,9 @@ const {
   createConcept,
   createTask,
   createAssignment,
+  updateConcept,
+  updateTask,
+  updateAssignment,
   getAllInternships,
   getInternshipById,
   updateInternship,
@@ -28,10 +32,17 @@ const {
   getCurrentMentorWorkboard,
   getInternWorkboard,
   getDomainInterns,
+  uploadConceptFiles,
+  getConceptFiles,
+  deleteConceptFile,
   upsertConceptProgress,
   upsertTaskProgress,
   getInternPerformance,
   submitAssignment,
+  submitAssignmentFiles,
+  uploadAssignmentFiles,
+  getAssignmentFiles,
+  deleteAssignmentFile,
   gradeAssignment,
   getAvailableInternshipsForIntern,
   getOngoingInternshipsWithProgress
@@ -45,8 +56,11 @@ const router = express.Router();
 router.post("/", protect, createInternship);
 router.post("/workboards/:workboardId/milestones", protect, createMilestone);
 router.post("/milestones/:milestoneId/concepts", protect, createConcept);
+router.put("/concepts/:conceptId", protect, updateConcept);
 router.post("/milestones/:milestoneId/tasks", protect, createTask);
+router.put("/tasks/:taskId", protect, updateTask);
 router.post("/milestones/:milestoneId/assignments", protect, createAssignment);
+router.put("/assignments/:assignmentId", protect, updateAssignment);
 router.get(
   "/workboards/current/:internshipId",
   protect,
@@ -77,6 +91,18 @@ router.get(
   getAvailableInternshipsForIntern
 );
 router.get("/intern/workboards/:internshipId", protect, getInternWorkboard);
+router.post(
+  "/concepts/:conceptId/files",
+  protect,
+  upload.array("concept_files", 10),
+  uploadConceptFiles
+);
+router.get("/concepts/:conceptId/files", protect, getConceptFiles);
+router.delete(
+  "/concepts/:conceptId/files/:fileId",
+  protect,
+  deleteConceptFile
+);
 router.get(
   "/intern/ongoing-with-progress",
   protect,
@@ -92,6 +118,24 @@ router.post(
   "/intern/assignments/:assignmentId/submit",
   protect,
   submitAssignment
+);
+router.post(
+  "/intern/assignments/:assignmentId/submit-files",
+  protect,
+  upload.array("assignment_submission_files", 10),
+  submitAssignmentFiles
+);
+router.post(
+  "/assignments/:assignmentId/files",
+  protect,
+  upload.array("assignment_files", 10),
+  uploadAssignmentFiles
+);
+router.get("/assignments/:assignmentId/files", protect, getAssignmentFiles);
+router.delete(
+  "/assignments/:assignmentId/files/:fileId",
+  protect,
+  deleteAssignmentFile
 );
 router.get(
   "/intern/performance/:internshipId",

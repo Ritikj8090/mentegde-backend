@@ -147,14 +147,15 @@ CREATE TABLE IF NOT EXISTS mentedge.assignment_submissions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   assignment_id UUID NOT NULL REFERENCES mentedge.assignments(id) ON DELETE CASCADE,
   intern_id UUID NOT NULL REFERENCES mentedge.users(id) ON DELETE CASCADE,
-  status TEXT NOT NULL DEFAULT 'submitted',
+  status TEXT NOT NULL DEFAULT 'not_started',
+  text_content TEXT,
   score INTEGER,
   feedback TEXT,
-  submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  submitted_at TIMESTAMPTZ,
   graded_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT assignment_submissions_status_check CHECK (
-    status IN ('submitted', 'graded', 'returned', 'late')
+    status IN ('not_started', 'submitted', 'graded', 'returned', 'late')
   ),
   CONSTRAINT assignment_submissions_unique UNIQUE (assignment_id, intern_id)
 );
@@ -167,6 +168,18 @@ CREATE TABLE IF NOT EXISTS mentedge.assignment_submission_files (
   file_type TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE mentedge.assignment_submissions
+  DROP CONSTRAINT IF EXISTS assignment_submissions_status_check;
+
+ALTER TABLE mentedge.assignment_submissions
+  ALTER COLUMN status SET DEFAULT 'not_started',
+  ALTER COLUMN submitted_at DROP NOT NULL;
+
+ALTER TABLE mentedge.assignment_submissions
+  ADD CONSTRAINT assignment_submissions_status_check
+  CHECK (status IN ('not_started','submitted','graded','returned','late'));
+
 
 CREATE INDEX IF NOT EXISTS workboards_internship_idx
   ON mentedge.workboards (internship_id);

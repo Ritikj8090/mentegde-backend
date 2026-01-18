@@ -173,7 +173,7 @@ const createConcept = async (req, res) => {
 
     const milestoneRes = await client.query(
       `
-      SELECT m.id
+      SELECT m.id, w.internship_id, w.domain_name
       FROM mentedge.milestones m
       JOIN mentedge.workboards w ON w.id = m.workboard_id
       WHERE m.id = $1 AND w.created_by = $2
@@ -211,6 +211,29 @@ const createConcept = async (req, res) => {
         orderIndex,
       ]
     );
+
+    const { internship_id, domain_name } = milestoneRes.rows[0];
+    const internsRes = await client.query(
+      `
+      SELECT j.intern_id
+      FROM mentedge.internship_joined j
+      JOIN mentedge.internship_domains d ON d.id = j.domain_id
+      WHERE j.internship_id = $1 AND d.domain_name = $2
+      `,
+      [internship_id, domain_name]
+    );
+
+    const internIds = internsRes.rows.map((row) => row.intern_id);
+    if (internIds.length > 0) {
+      await client.query(
+        `
+        INSERT INTO mentedge.concept_progress (concept_id, intern_id, status)
+        SELECT $1, unnest($2::uuid[]), 'not_started'
+        ON CONFLICT DO NOTHING
+        `,
+        [result.rows[0].id, internIds]
+      );
+    }
 
     await client.query("COMMIT");
     return res.status(201).json({
@@ -262,7 +285,7 @@ const createTask = async (req, res) => {
 
     const milestoneRes = await client.query(
       `
-      SELECT m.id
+      SELECT m.id, w.internship_id, w.domain_name
       FROM mentedge.milestones m
       JOIN mentedge.workboards w ON w.id = m.workboard_id
       WHERE m.id = $1 AND w.created_by = $2
@@ -305,6 +328,32 @@ const createTask = async (req, res) => {
       );
     }
 
+    let taskInternIds = uniqueAssignedToIds;
+    if (taskInternIds.length === 0) {
+      const { internship_id, domain_name } = milestoneRes.rows[0];
+      const internsRes = await client.query(
+        `
+        SELECT j.intern_id
+        FROM mentedge.internship_joined j
+        JOIN mentedge.internship_domains d ON d.id = j.domain_id
+        WHERE j.internship_id = $1 AND d.domain_name = $2
+        `,
+        [internship_id, domain_name]
+      );
+      taskInternIds = internsRes.rows.map((row) => row.intern_id);
+    }
+
+    if (taskInternIds.length > 0) {
+      await client.query(
+        `
+        INSERT INTO mentedge.task_progress (task_id, intern_id, status)
+        SELECT $1, unnest($2::uuid[]), 'todo'
+        ON CONFLICT DO NOTHING
+        `,
+        [result.rows[0].id, taskInternIds]
+      );
+    }
+
     await client.query("COMMIT");
     return res.status(201).json({
       message: "Task created",
@@ -314,6 +363,500 @@ const createTask = async (req, res) => {
     await client.query("ROLLBACK");
     console.error("createTask error:", err);
     return res.status(500).json({ message: "Failed to create task" });
+  } finally {
+    client.release();
+  }
+};
+
+const updateConcept = async (req, res) => {
+  const { title, description, status, order_index } = req.body;
+  const { conceptId } = req.params;
+
+  if (!conceptId) {
+    return res.status(400).json({ message: "conceptId is required" });
+  }
+
+  const client = await db.connect();
+  try {
+    const mentorId = req.user.id;
+    const updates = [];
+    const values = [];
+    let paramIndex = 1;
+
+    if (title !== undefined) {
+      if (!title || !title.trim()) {
+        return res.status(400).json({ message: "title cannot be empty" });
+      }
+      updates.push(`title = $${paramIndex++}`);
+      values.push(title.trim());
+    }
+
+    if (description !== undefined) {
+      updates.push(`description = $${paramIndex++}`);
+      values.push(description ?? null);
+    }
+
+    if (status !== undefined) {
+      updates.push(`status = $${paramIndex++}`);
+      values.push(normalizeConceptStatus(status));
+    }
+
+    let orderIndex = null;
+    if (order_index !== undefined) {
+      const parsedIndex = Number.parseInt(order_index, 10);
+      orderIndex = Number.isNaN(parsedIndex) || parsedIndex < 0 ? 0 : parsedIndex;
+      updates.push(`order_index = $${paramIndex++}`);
+      values.push(orderIndex);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ message: "No fields to update" });
+    }
+
+    await client.query("BEGIN");
+
+    const conceptRes = await client.query(
+      `
+      SELECT c.id, c.order_index, c.milestone_id, w.id AS workboard_id
+      FROM mentedge.concepts c
+      JOIN mentedge.milestones m ON m.id = c.milestone_id
+      JOIN mentedge.workboards w ON w.id = m.workboard_id
+      WHERE c.id = $1 AND w.created_by = $2
+      `,
+      [conceptId, mentorId]
+    );
+
+    if (conceptRes.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Concept not found" });
+    }
+
+    const concept = conceptRes.rows[0];
+
+    if (orderIndex !== null && orderIndex !== concept.order_index) {
+      if (orderIndex > concept.order_index) {
+        await client.query(
+          `
+          UPDATE mentedge.concepts
+          SET order_index = order_index - 1
+          WHERE milestone_id = $1
+            AND order_index > $2
+            AND order_index <= $3
+          `,
+          [concept.milestone_id, concept.order_index, orderIndex]
+        );
+      } else {
+        await client.query(
+          `
+          UPDATE mentedge.concepts
+          SET order_index = order_index + 1
+          WHERE milestone_id = $1
+            AND order_index >= $2
+            AND order_index < $3
+          `,
+          [concept.milestone_id, orderIndex, concept.order_index]
+        );
+      }
+    }
+
+    const updateQuery = `
+      UPDATE mentedge.concepts
+      SET ${updates.join(", ")}, updated_at = NOW()
+      WHERE id = $${paramIndex}
+      RETURNING *
+    `;
+    values.push(conceptId);
+
+    const result = await client.query(updateQuery, values);
+
+    await client.query("COMMIT");
+    return res.status(200).json({
+      message: "Concept updated",
+      concept: result.rows[0],
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("updateConcept error:", err);
+    return res.status(500).json({ message: "Failed to update concept" });
+  } finally {
+    client.release();
+  }
+};
+
+const updateTask = async (req, res) => {
+  const { taskId } = req.params;
+  const { title, description, status, due_date, assigned_to, assigned_to_ids } =
+    req.body;
+
+  if (!taskId) {
+    return res.status(400).json({ message: "taskId is required" });
+  }
+
+  const updateAssignments =
+    assigned_to_ids !== undefined || assigned_to !== undefined;
+  const rawAssignedTo =
+    Array.isArray(assigned_to_ids) && assigned_to_ids.length > 0
+      ? assigned_to_ids
+      : assigned_to;
+  const assignedToIds = Array.isArray(rawAssignedTo)
+    ? rawAssignedTo.filter(Boolean)
+    : rawAssignedTo
+      ? [rawAssignedTo]
+      : [];
+  const uniqueAssignedToIds = [...new Set(assignedToIds)];
+  const taskAssignedTo =
+    updateAssignments && uniqueAssignedToIds.length === 1
+      ? uniqueAssignedToIds[0]
+      : updateAssignments
+        ? null
+        : undefined;
+
+  const client = await db.connect();
+  try {
+    const mentorId = req.user.id;
+    const updates = [];
+    const values = [];
+    let paramIndex = 1;
+
+    if (title !== undefined) {
+      if (!title || !title.trim()) {
+        return res.status(400).json({ message: "title cannot be empty" });
+      }
+      updates.push(`title = $${paramIndex++}`);
+      values.push(title.trim());
+    }
+
+    if (description !== undefined) {
+      updates.push(`description = $${paramIndex++}`);
+      values.push(description ?? null);
+    }
+
+    if (status !== undefined) {
+      updates.push(`status = $${paramIndex++}`);
+      values.push(normalizeTaskStatus(status));
+    }
+
+    if (due_date !== undefined) {
+      updates.push(`due_date = $${paramIndex++}`);
+      values.push(due_date ?? null);
+    }
+
+    if (updateAssignments) {
+      updates.push(`assigned_to = $${paramIndex++}`);
+      values.push(taskAssignedTo);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ message: "No fields to update" });
+    }
+
+    await client.query("BEGIN");
+
+    const taskRes = await client.query(
+      `
+      SELECT t.id, w.internship_id, w.domain_name
+      FROM mentedge.tasks t
+      JOIN mentedge.milestones m ON m.id = t.milestone_id
+      JOIN mentedge.workboards w ON w.id = m.workboard_id
+      WHERE t.id = $1 AND w.created_by = $2
+      `,
+      [taskId, mentorId]
+    );
+
+    if (taskRes.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Task not found" });
+    }
+
+    const { internship_id, domain_name } = taskRes.rows[0];
+
+    if (updateAssignments) {
+      if (uniqueAssignedToIds.length > 0) {
+        await client.query(
+          `
+          DELETE FROM mentedge.task_assignments
+          WHERE task_id = $1
+            AND intern_id <> ALL($2::uuid[])
+          `,
+          [taskId, uniqueAssignedToIds]
+        );
+
+        await client.query(
+          `
+          INSERT INTO mentedge.task_assignments (task_id, intern_id)
+          SELECT $1, unnest($2::uuid[])
+          ON CONFLICT DO NOTHING
+          `,
+          [taskId, uniqueAssignedToIds]
+        );
+
+        await client.query(
+          `
+          INSERT INTO mentedge.task_progress (task_id, intern_id, status)
+          SELECT $1, unnest($2::uuid[]), 'todo'
+          ON CONFLICT DO NOTHING
+          `,
+          [taskId, uniqueAssignedToIds]
+        );
+      } else {
+        await client.query(
+          `
+          DELETE FROM mentedge.task_assignments
+          WHERE task_id = $1
+          `,
+          [taskId]
+        );
+
+        const internsRes = await client.query(
+          `
+          SELECT j.intern_id
+          FROM mentedge.internship_joined j
+          JOIN mentedge.internship_domains d ON d.id = j.domain_id
+          WHERE j.internship_id = $1 AND d.domain_name = $2
+          `,
+          [internship_id, domain_name]
+        );
+
+        const internIds = internsRes.rows.map((row) => row.intern_id);
+        if (internIds.length > 0) {
+          await client.query(
+            `
+            INSERT INTO mentedge.task_progress (task_id, intern_id, status)
+            SELECT $1, unnest($2::uuid[]), 'todo'
+            ON CONFLICT DO NOTHING
+            `,
+            [taskId, internIds]
+          );
+        }
+      }
+    }
+
+    const updateQuery = `
+      UPDATE mentedge.tasks
+      SET ${updates.join(", ")}, updated_at = NOW()
+      WHERE id = $${paramIndex}
+      RETURNING *
+    `;
+    values.push(taskId);
+
+    const result = await client.query(updateQuery, values);
+
+    await client.query("COMMIT");
+    return res.status(200).json({
+      message: "Task updated",
+      task: result.rows[0],
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("updateTask error:", err);
+    return res.status(500).json({ message: "Failed to update task" });
+  } finally {
+    client.release();
+  }
+};
+
+const updateAssignment = async (req, res) => {
+  const { assignmentId } = req.params;
+  const {
+    title,
+    description,
+    status,
+    max_score,
+    due_date,
+    assigned_to,
+    assigned_to_ids,
+    assign_all,
+  } = req.body;
+
+  if (!assignmentId) {
+    return res.status(400).json({ message: "assignmentId is required" });
+  }
+
+  const updateAssignments =
+    assigned_to_ids !== undefined ||
+    assigned_to !== undefined ||
+    assign_all !== undefined;
+  const rawAssignedTo =
+    Array.isArray(assigned_to_ids) && assigned_to_ids.length > 0
+      ? assigned_to_ids
+      : assigned_to;
+  const assignedToIds = Array.isArray(rawAssignedTo)
+    ? rawAssignedTo.filter(Boolean)
+    : rawAssignedTo
+      ? [rawAssignedTo]
+      : [];
+  const uniqueAssignedToIds = [...new Set(assignedToIds)];
+  const assignAll = assign_all === true || assign_all === "true";
+
+  const client = await db.connect();
+  try {
+    const mentorId = req.user.id;
+    const updates = [];
+    const values = [];
+    let paramIndex = 1;
+
+    if (title !== undefined) {
+      if (!title || !title.trim()) {
+        return res.status(400).json({ message: "title cannot be empty" });
+      }
+      updates.push(`title = $${paramIndex++}`);
+      values.push(title.trim());
+    }
+
+    if (description !== undefined) {
+      updates.push(`description = $${paramIndex++}`);
+      values.push(description ?? null);
+    }
+
+    if (status !== undefined) {
+      updates.push(`status = $${paramIndex++}`);
+      values.push(normalizeAssignmentStatus(status));
+    }
+
+    if (max_score !== undefined) {
+      const parsedScore = Number.parseInt(max_score, 10);
+      if (Number.isNaN(parsedScore) || parsedScore <= 0) {
+        return res
+          .status(400)
+          .json({ message: "max_score must be a positive integer" });
+      }
+      updates.push(`max_score = $${paramIndex++}`);
+      values.push(parsedScore);
+    }
+
+    if (due_date !== undefined) {
+      updates.push(`due_date = $${paramIndex++}`);
+      values.push(due_date ?? null);
+    }
+
+    if (updates.length === 0 && !updateAssignments) {
+      return res.status(400).json({ message: "No fields to update" });
+    }
+
+    await client.query("BEGIN");
+
+    const assignmentRes = await client.query(
+      `
+      SELECT a.id, w.internship_id, w.domain_name
+      FROM mentedge.assignments a
+      JOIN mentedge.milestones m ON m.id = a.milestone_id
+      JOIN mentedge.workboards w ON w.id = m.workboard_id
+      WHERE a.id = $1 AND w.created_by = $2
+      `,
+      [assignmentId, mentorId]
+    );
+
+    if (assignmentRes.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Assignment not found" });
+    }
+
+    const { internship_id, domain_name } = assignmentRes.rows[0];
+
+    if (updateAssignments) {
+      if (assignAll || uniqueAssignedToIds.length === 0) {
+        await client.query(
+          `
+          DELETE FROM mentedge.assignment_assignments
+          WHERE assignment_id = $1
+          `,
+          [assignmentId]
+        );
+
+        const internsRes = await client.query(
+          `
+          SELECT j.intern_id
+          FROM mentedge.internship_joined j
+          JOIN mentedge.internship_domains d ON d.id = j.domain_id
+          WHERE j.internship_id = $1 AND d.domain_name = $2
+          `,
+          [internship_id, domain_name]
+        );
+
+        const internIds = internsRes.rows.map((row) => row.intern_id);
+        if (internIds.length > 0) {
+          await client.query(
+            `
+            INSERT INTO mentedge.assignment_submissions (
+              assignment_id, intern_id, status
+            )
+            SELECT $1, unnest($2::uuid[]), 'not_started'
+            ON CONFLICT DO NOTHING
+            `,
+            [assignmentId, internIds]
+          );
+        }
+      } else {
+        await client.query(
+          `
+          DELETE FROM mentedge.assignment_assignments
+          WHERE assignment_id = $1
+            AND intern_id <> ALL($2::uuid[])
+          `,
+          [assignmentId, uniqueAssignedToIds]
+        );
+
+        await client.query(
+          `
+          INSERT INTO mentedge.assignment_assignments (assignment_id, intern_id)
+          SELECT $1, unnest($2::uuid[])
+          ON CONFLICT DO NOTHING
+          `,
+          [assignmentId, uniqueAssignedToIds]
+        );
+
+        await client.query(
+          `
+          DELETE FROM mentedge.assignment_submissions
+          WHERE assignment_id = $1
+            AND intern_id <> ALL($2::uuid[])
+          `,
+          [assignmentId, uniqueAssignedToIds]
+        );
+
+        await client.query(
+          `
+          INSERT INTO mentedge.assignment_submissions (
+            assignment_id, intern_id, status
+          )
+          SELECT $1, unnest($2::uuid[]), 'not_started'
+          ON CONFLICT DO NOTHING
+          `,
+          [assignmentId, uniqueAssignedToIds]
+        );
+      }
+    }
+
+    let updatedAssignment = null;
+    if (updates.length > 0) {
+      const updateQuery = `
+        UPDATE mentedge.assignments
+        SET ${updates.join(", ")}, updated_at = NOW()
+        WHERE id = $${paramIndex}
+        RETURNING *
+      `;
+      values.push(assignmentId);
+      const result = await client.query(updateQuery, values);
+      updatedAssignment = result.rows[0];
+    } else {
+      const result = await client.query(
+        `
+        SELECT * FROM mentedge.assignments WHERE id = $1
+        `,
+        [assignmentId]
+      );
+      updatedAssignment = result.rows[0];
+    }
+
+    await client.query("COMMIT");
+    return res.status(200).json({
+      message: "Assignment updated",
+      assignment: updatedAssignment,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("updateAssignment error:", err);
+    return res.status(500).json({ message: "Failed to update assignment" });
   } finally {
     client.release();
   }
@@ -421,6 +964,33 @@ const createAssignment = async (req, res) => {
       );
     }
 
+    if (assignmentInternIds.length === 0) {
+      const internsRes = await client.query(
+        `
+        SELECT j.intern_id
+        FROM mentedge.internship_joined j
+        JOIN mentedge.internship_domains d ON d.id = j.domain_id
+        WHERE j.internship_id = $1
+          AND d.domain_name = $2
+        `,
+        [internship_id, domain_name]
+      );
+      assignmentInternIds = internsRes.rows.map((row) => row.intern_id);
+    }
+
+    if (assignmentInternIds.length > 0) {
+      await client.query(
+        `
+        INSERT INTO mentedge.assignment_submissions (
+          assignment_id, intern_id, status
+        )
+        SELECT $1, unnest($2::uuid[]), 'not_started'
+        ON CONFLICT DO NOTHING
+        `,
+        [result.rows[0].id, assignmentInternIds]
+      );
+    }
+
     await client.query("COMMIT");
     return res.status(201).json({
       message: "Assignment created",
@@ -495,7 +1065,7 @@ const getCurrentMentorWorkboard = async (req, res) => {
             'status', c.status,
             'order_index', c.order_index,
             'progress', json_build_object(
-              'status', cp.status,
+              'status', COALESCE(cp.status, 'not_started'),
               'completed_at', cp.completed_at,
               'updated_at', cp.updated_at
             ),
@@ -526,7 +1096,7 @@ const getCurrentMentorWorkboard = async (req, res) => {
               END
             ),
             'progress', json_build_object(
-              'status', tp.status,
+              'status', COALESCE(tp.status, 'todo'),
               'completed_at', tp.completed_at,
               'updated_at', tp.updated_at
             ),
@@ -562,7 +1132,8 @@ const getCurrentMentorWorkboard = async (req, res) => {
             'assignees', COALESCE(aa.assignees, '[]'::json),
             'progress', json_build_object(
               'id', s.id,
-              'status', s.status,
+              'status', COALESCE(s.status, 'not_started'),
+              'text_content', s.text_content,
               'score', s.score,
               'feedback', s.feedback,
               'submitted_at', s.submitted_at,
@@ -827,11 +1398,265 @@ const getDomainInterns = async (req, res) => {
   }
 };
 
+const uploadConceptFiles = async (req, res) => {
+  try {
+    console.log(req.files);
+    const userId = req.user?.id;
+    const role = req.user?.role;
+    const { conceptId } = req.params;
+    const files = Array.isArray(req.files) ? req.files : [];
+
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    if (!conceptId) {
+      return res.status(400).json({ message: "conceptId is required" });
+    }
+
+    if (files.length === 0) {
+      return res.status(400).json({ message: "No files uploaded" });
+    }
+
+    const conceptRes = await db.query(
+      `
+      SELECT c.id, w.internship_id, w.domain_name, w.created_by
+      FROM mentedge.concepts c
+      JOIN mentedge.milestones m ON m.id = c.milestone_id
+      JOIN mentedge.workboards w ON w.id = m.workboard_id
+      WHERE c.id = $1
+      `,
+      [conceptId]
+    );
+
+    if (conceptRes.rowCount === 0) {
+      return res.status(404).json({ message: "Concept not found" });
+    }
+
+    const concept = conceptRes.rows[0];
+
+    if (role === "mentor") {
+      if (concept.created_by !== userId) {
+        return res.status(403).json({ message: "Not allowed to upload" });
+      }
+    } else {
+      const joinedRes = await db.query(
+        `
+        SELECT 1
+        FROM mentedge.internship_joined j
+        JOIN mentedge.internship_domains d ON d.id = j.domain_id
+        WHERE j.intern_id = $1
+          AND j.internship_id = $2
+          AND d.domain_name = $3
+        `,
+        [userId, concept.internship_id, concept.domain_name]
+      );
+
+      if (joinedRes.rowCount === 0) {
+        return res.status(403).json({ message: "Not allowed to upload" });
+      }
+    }
+
+    const fileUrls = files.map((file) => file.path);
+    const fileNames = files.map((file) => file.originalname || file.filename);
+    const fileTypes = files.map((file) => file.mimetype);
+
+    const result = await db.query(
+      `
+      INSERT INTO mentedge.concept_files (
+        concept_id, file_url, file_name, file_type, uploaded_by_user_id, uploaded_by_mentor_id
+      )
+      SELECT
+        $1,
+        f.file_url,
+        f.file_name,
+        f.file_type,
+        $2,
+        $3
+      FROM unnest($4::text[], $5::text[], $6::text[]) AS f(file_url, file_name, file_type)
+      RETURNING *
+      `,
+      [
+        conceptId,
+        role === "user" ? userId : null,
+        role === "mentor" ? userId : null,
+        fileUrls,
+        fileNames,
+        fileTypes,
+      ]
+    );
+
+    return res.status(201).json({
+      message: "Concept files uploaded",
+      files: result.rows,
+    });
+  } catch (err) {
+    console.error("uploadConceptFiles error:", err);
+    return res.status(500).json({ message: "Failed to upload concept files" });
+  }
+};
+
+const getConceptFiles = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const role = req.user?.role;
+    const { conceptId } = req.params;
+
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    if (!conceptId) {
+      return res.status(400).json({ message: "conceptId is required" });
+    }
+
+    const conceptRes = await db.query(
+      `
+      SELECT c.id, w.internship_id, w.domain_name, w.created_by
+      FROM mentedge.concepts c
+      JOIN mentedge.milestones m ON m.id = c.milestone_id
+      JOIN mentedge.workboards w ON w.id = m.workboard_id
+      WHERE c.id = $1
+      `,
+      [conceptId]
+    );
+
+    if (conceptRes.rowCount === 0) {
+      return res.status(404).json({ message: "Concept not found" });
+    }
+
+    const concept = conceptRes.rows[0];
+
+    if (role === "mentor") {
+      if (concept.created_by !== userId) {
+        return res.status(403).json({ message: "Not allowed to view files" });
+      }
+    } else {
+      const joinedRes = await db.query(
+        `
+        SELECT 1
+        FROM mentedge.internship_joined j
+        JOIN mentedge.internship_domains d ON d.id = j.domain_id
+        WHERE j.intern_id = $1
+          AND j.internship_id = $2
+          AND d.domain_name = $3
+        `,
+        [userId, concept.internship_id, concept.domain_name]
+      );
+
+      if (joinedRes.rowCount === 0) {
+        return res.status(403).json({ message: "Not allowed to view files" });
+      }
+    }
+
+    const result = await db.query(
+      `
+      SELECT
+        id,
+        concept_id,
+        file_url,
+        file_name,
+        file_type,
+        uploaded_by_user_id,
+        uploaded_by_mentor_id,
+        created_at
+      FROM mentedge.concept_files
+      WHERE concept_id = $1
+      ORDER BY created_at DESC
+      `,
+      [conceptId]
+    );
+
+    return res.status(200).json(result.rows);
+  } catch (err) {
+    console.error("getConceptFiles error:", err);
+    return res.status(500).json({ message: "Failed to fetch concept files" });
+  }
+};
+
+const deleteConceptFile = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const role = req.user?.role;
+    const { conceptId, fileId } = req.params;
+
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    if (!conceptId || !fileId) {
+      return res
+        .status(400)
+        .json({ message: "conceptId and fileId are required" });
+    }
+
+    const conceptRes = await db.query(
+      `
+      SELECT c.id, w.internship_id, w.domain_name, w.created_by
+      FROM mentedge.concepts c
+      JOIN mentedge.milestones m ON m.id = c.milestone_id
+      JOIN mentedge.workboards w ON w.id = m.workboard_id
+      WHERE c.id = $1
+      `,
+      [conceptId]
+    );
+
+    if (conceptRes.rowCount === 0) {
+      return res.status(404).json({ message: "Concept not found" });
+    }
+
+    const concept = conceptRes.rows[0];
+
+    if (role === "mentor") {
+      if (concept.created_by !== userId) {
+        return res.status(403).json({ message: "Not allowed to delete files" });
+      }
+    } else {
+      const joinedRes = await db.query(
+        `
+        SELECT 1
+        FROM mentedge.internship_joined j
+        JOIN mentedge.internship_domains d ON d.id = j.domain_id
+        WHERE j.intern_id = $1
+          AND j.internship_id = $2
+          AND d.domain_name = $3
+        `,
+        [userId, concept.internship_id, concept.domain_name]
+      );
+
+      if (joinedRes.rowCount === 0) {
+        return res.status(403).json({ message: "Not allowed to delete files" });
+      }
+    }
+
+    const deleteRes = await db.query(
+      `
+      DELETE FROM mentedge.concept_files
+      WHERE id = $1 AND concept_id = $2
+      RETURNING *
+      `,
+      [fileId, conceptId]
+    );
+
+    if (deleteRes.rowCount === 0) {
+      return res.status(404).json({ message: "File not found" });
+    }
+
+    return res.status(200).json({
+      message: "Concept file deleted",
+      file: deleteRes.rows[0],
+    });
+  } catch (err) {
+    console.error("deleteConceptFile error:", err);
+    return res.status(500).json({ message: "Failed to delete concept file" });
+  }
+};
+
 const submitAssignment = async (req, res) => {
   try {
     const internId = req.user?.id;
     const { assignmentId } = req.params;
-    const { status } = req.body;
+    const { status, text_content } = req.body;
 
     if (!internId) {
       return res.status(401).json({ message: "Unauthorized" });
@@ -866,8 +1691,103 @@ const submitAssignment = async (req, res) => {
       return res.status(404).json({ message: "Assignment not found" });
     }
 
-    const normalizedStatus = normalizeAssignmentSubmissionStatus(status);
+    if (status === undefined && text_content === undefined) {
+      return res.status(400).json({
+        message: "Provide status or text_content to submit",
+      });
+    }
+
+    if (text_content !== undefined && !String(text_content).trim()) {
+      return res.status(400).json({ message: "text_content cannot be empty" });
+    }
+
+    const normalizedStatus = normalizeAssignmentSubmissionStatus(
+      status ?? "submitted"
+    );
     const result = await db.query(
+      `
+      INSERT INTO mentedge.assignment_submissions (
+        assignment_id, intern_id, status, text_content, submitted_at, updated_at
+      )
+      VALUES ($1, $2, $3, $4, NOW(), NOW())
+      ON CONFLICT (assignment_id, intern_id)
+      DO UPDATE SET
+        status = EXCLUDED.status,
+        text_content = COALESCE(EXCLUDED.text_content, mentedge.assignment_submissions.text_content),
+        submitted_at = NOW(),
+        updated_at = NOW()
+      RETURNING *
+      `,
+      [
+        assignmentId,
+        internId,
+        normalizedStatus,
+        text_content ?? null,
+      ]
+    );
+
+    return res.status(200).json({
+      message: "Assignment submitted",
+      submission: result.rows[0],
+    });
+  } catch (err) {
+    console.error("submitAssignment error:", err);
+    return res.status(500).json({ message: "Failed to submit assignment" });
+  }
+};
+
+const submitAssignmentFiles = async (req, res) => {
+  try {
+    const internId = req.user?.id;
+    const { assignmentId } = req.params;
+    const { status } = req.body;
+    const files = Array.isArray(req.files) ? req.files : [];
+
+    if (!internId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    if (!assignmentId) {
+      return res.status(400).json({ message: "assignmentId is required" });
+    }
+
+    if (files.length === 0) {
+      return res.status(400).json({ message: "No files uploaded" });
+    }
+
+    const assignmentRes = await db.query(
+      `
+      SELECT a.id
+      FROM mentedge.assignments a
+      JOIN mentedge.milestones m ON m.id = a.milestone_id
+      JOIN mentedge.workboards w ON w.id = m.workboard_id
+      JOIN mentedge.internship_joined j ON j.internship_id = w.internship_id
+      JOIN mentedge.internship_domains d
+        ON d.id = j.domain_id AND d.domain_name = w.domain_name
+      LEFT JOIN mentedge.assignment_assignments aa
+        ON aa.assignment_id = a.id AND aa.intern_id = $2
+      WHERE a.id = $1
+        AND j.intern_id = $2
+        AND (
+          aa.intern_id IS NOT NULL
+          OR NOT EXISTS (
+            SELECT 1
+            FROM mentedge.assignment_assignments aa2
+            WHERE aa2.assignment_id = a.id
+          )
+        )
+      `,
+      [assignmentId, internId]
+    );
+
+    if (assignmentRes.rowCount === 0) {
+      return res.status(404).json({ message: "Assignment not found" });
+    }
+
+    const normalizedStatus = normalizeAssignmentSubmissionStatus(
+      status ?? "submitted"
+    );
+    const submissionRes = await db.query(
       `
       INSERT INTO mentedge.assignment_submissions (
         assignment_id, intern_id, status, submitted_at, updated_at
@@ -883,13 +1803,238 @@ const submitAssignment = async (req, res) => {
       [assignmentId, internId, normalizedStatus]
     );
 
-    return res.status(200).json({
-      message: "Assignment submitted",
-      submission: result.rows[0],
+    const submissionId = submissionRes.rows[0].id;
+    const fileUrls = files.map((file) => file.path);
+    const fileNames = files.map((file) => file.originalname || file.filename);
+    const fileTypes = files.map((file) => file.mimetype);
+
+    const filesRes = await db.query(
+      `
+      INSERT INTO mentedge.assignment_submission_files (
+        submission_id, file_url, file_name, file_type
+      )
+      SELECT
+        $1,
+        f.file_url,
+        f.file_name,
+        f.file_type
+      FROM unnest($2::text[], $3::text[], $4::text[]) AS f(file_url, file_name, file_type)
+      RETURNING *
+      `,
+      [submissionId, fileUrls, fileNames, fileTypes]
+    );
+
+    return res.status(201).json({
+      message: "Assignment files submitted",
+      submission: submissionRes.rows[0],
+      files: filesRes.rows,
     });
   } catch (err) {
-    console.error("submitAssignment error:", err);
-    return res.status(500).json({ message: "Failed to submit assignment" });
+    console.error("submitAssignmentFiles error:", err);
+    return res.status(500).json({ message: "Failed to submit files" });
+  }
+};
+
+const uploadAssignmentFiles = async (req, res) => {
+  try {
+    const mentorId = req.user?.id;
+    const { assignmentId } = req.params;
+    const files = Array.isArray(req.files) ? req.files : [];
+
+    if (!mentorId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    if (!assignmentId) {
+      return res.status(400).json({ message: "assignmentId is required" });
+    }
+
+    if (files.length === 0) {
+      return res.status(400).json({ message: "No files uploaded" });
+    }
+
+    const assignmentRes = await db.query(
+      `
+      SELECT a.id
+      FROM mentedge.assignments a
+      JOIN mentedge.milestones m ON m.id = a.milestone_id
+      JOIN mentedge.workboards w ON w.id = m.workboard_id
+      WHERE a.id = $1 AND w.created_by = $2
+      `,
+      [assignmentId, mentorId]
+    );
+
+    if (assignmentRes.rowCount === 0) {
+      return res.status(404).json({ message: "Assignment not found" });
+    }
+
+    const fileUrls = files.map((file) => file.path);
+    const fileNames = files.map((file) => file.originalname || file.filename);
+    const fileTypes = files.map((file) => file.mimetype);
+
+    const result = await db.query(
+      `
+      INSERT INTO mentedge.assignment_files (
+        assignment_id, file_url, file_name, file_type
+      )
+      SELECT
+        $1,
+        f.file_url,
+        f.file_name,
+        f.file_type
+      FROM unnest($2::text[], $3::text[], $4::text[]) AS f(file_url, file_name, file_type)
+      RETURNING *
+      `,
+      [assignmentId, fileUrls, fileNames, fileTypes]
+    );
+
+    return res.status(201).json({
+      message: "Assignment files uploaded",
+      files: result.rows,
+    });
+  } catch (err) {
+    console.error("uploadAssignmentFiles error:", err);
+    return res.status(500).json({ message: "Failed to upload assignment files" });
+  }
+};
+
+const getAssignmentFiles = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const role = req.user?.role;
+    const { assignmentId } = req.params;
+
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    if (!assignmentId) {
+      return res.status(400).json({ message: "assignmentId is required" });
+    }
+
+    const assignmentRes = await db.query(
+      `
+      SELECT a.id, w.internship_id, w.domain_name, w.created_by
+      FROM mentedge.assignments a
+      JOIN mentedge.milestones m ON m.id = a.milestone_id
+      JOIN mentedge.workboards w ON w.id = m.workboard_id
+      WHERE a.id = $1
+      `,
+      [assignmentId]
+    );
+
+    if (assignmentRes.rowCount === 0) {
+      return res.status(404).json({ message: "Assignment not found" });
+    }
+
+    const assignment = assignmentRes.rows[0];
+
+    if (role === "mentor") {
+      if (assignment.created_by !== userId) {
+        return res.status(403).json({ message: "Not allowed to view files" });
+      }
+    } else {
+      const joinedRes = await db.query(
+        `
+        SELECT 1
+        FROM mentedge.internship_joined j
+        JOIN mentedge.internship_domains d ON d.id = j.domain_id
+        WHERE j.intern_id = $1
+          AND j.internship_id = $2
+          AND d.domain_name = $3
+        `,
+        [userId, assignment.internship_id, assignment.domain_name]
+      );
+
+      if (joinedRes.rowCount === 0) {
+        return res.status(403).json({ message: "Not allowed to view files" });
+      }
+    }
+
+    const result = await db.query(
+      `
+      SELECT
+        id,
+        assignment_id,
+        file_url,
+        file_name,
+        file_type,
+        created_at
+      FROM mentedge.assignment_files
+      WHERE assignment_id = $1
+      ORDER BY created_at DESC
+      `,
+      [assignmentId]
+    );
+
+    return res.status(200).json(result.rows);
+  } catch (err) {
+    console.error("getAssignmentFiles error:", err);
+    return res.status(500).json({ message: "Failed to fetch assignment files" });
+  }
+};
+
+const deleteAssignmentFile = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const role = req.user?.role;
+    const { assignmentId, fileId } = req.params;
+
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    if (!assignmentId || !fileId) {
+      return res
+        .status(400)
+        .json({ message: "assignmentId and fileId are required" });
+    }
+
+    const assignmentRes = await db.query(
+      `
+      SELECT a.id, w.internship_id, w.domain_name, w.created_by
+      FROM mentedge.assignments a
+      JOIN mentedge.milestones m ON m.id = a.milestone_id
+      JOIN mentedge.workboards w ON w.id = m.workboard_id
+      WHERE a.id = $1
+      `,
+      [assignmentId]
+    );
+
+    if (assignmentRes.rowCount === 0) {
+      return res.status(404).json({ message: "Assignment not found" });
+    }
+
+    const assignment = assignmentRes.rows[0];
+
+    if (role === "mentor") {
+      if (assignment.created_by !== userId) {
+        return res.status(403).json({ message: "Not allowed to delete files" });
+      }
+    } else {
+      return res.status(403).json({ message: "Not allowed to delete files" });
+    }
+
+    const deleteRes = await db.query(
+      `
+      DELETE FROM mentedge.assignment_files
+      WHERE id = $1 AND assignment_id = $2
+      RETURNING *
+      `,
+      [fileId, assignmentId]
+    );
+
+    if (deleteRes.rowCount === 0) {
+      return res.status(404).json({ message: "File not found" });
+    }
+
+    return res.status(200).json({
+      message: "Assignment file deleted",
+      file: deleteRes.rows[0],
+    });
+  } catch (err) {
+    console.error("deleteAssignmentFile error:", err);
+    return res.status(500).json({ message: "Failed to delete assignment file" });
   }
 };
 
@@ -1275,10 +2420,16 @@ const getInternPerformance = async (req, res) => {
           )
       ),
       assignment_assigned AS (
-        SELECT DISTINCT aa.assignment_id AS id
-        FROM mentedge.assignment_assignments aa
-        JOIN assignments a ON a.id = aa.assignment_id
-        WHERE aa.intern_id = $2
+        SELECT DISTINCT a.id
+        FROM assignments a
+        LEFT JOIN mentedge.assignment_assignments aa
+          ON aa.assignment_id = a.id AND aa.intern_id = $2
+        WHERE aa.intern_id IS NOT NULL
+          OR NOT EXISTS (
+            SELECT 1
+            FROM mentedge.assignment_assignments aa2
+            WHERE aa2.assignment_id = a.id
+          )
       )
       SELECT
         (SELECT COUNT(*) FROM concepts) AS concepts_total,
@@ -1302,6 +2453,7 @@ const getInternPerformance = async (req, res) => {
          FROM assignments a
          JOIN mentedge.assignment_submissions s
            ON s.assignment_id = a.id AND s.intern_id = $2
+         WHERE s.status <> 'not_started'
         ) AS assignments_submitted,
         (SELECT COUNT(*)
          FROM assignments a
@@ -3075,6 +4227,7 @@ const getOngoingInternshipsWithProgress = async (req, res) => {
            FROM assignments a
            JOIN mentedge.assignment_submissions s
              ON s.assignment_id = a.id AND s.intern_id = $1
+           WHERE s.status <> 'not_started'
           ) AS assignments_submitted,
           (SELECT COUNT(*)
            FROM assignments a
@@ -3160,6 +4313,9 @@ module.exports = {
   createConcept,
   createTask,
   createMilestone,
+  updateConcept,
+  updateTask,
+  updateAssignment,
   createInternship,
   getAllInternships,
   getInternshipById,
@@ -3182,10 +4338,17 @@ module.exports = {
   getCurrentMentorWorkboard,
   getInternWorkboard,
   getDomainInterns,
+  uploadConceptFiles,
+  getConceptFiles,
+  deleteConceptFile,
   upsertConceptProgress,
   upsertTaskProgress,
   getInternPerformance,
   submitAssignment,
+  submitAssignmentFiles,
+  uploadAssignmentFiles,
+  getAssignmentFiles,
+  deleteAssignmentFile,
   gradeAssignment,
   getAvailableInternshipsForIntern,
   getOngoingInternshipsWithProgress,
