@@ -92,6 +92,13 @@ CREATE TABLE IF NOT EXISTS mentedge.internship_payments (
   internship_id UUID NOT NULL REFERENCES mentedge.internships(id) ON DELETE CASCADE,
   domain_id UUID NOT NULL REFERENCES mentedge.internship_domains(id) ON DELETE CASCADE,
   amount NUMERIC(10, 2) NOT NULL,
+  original_amount NUMERIC(10, 2),
+  discount_percent INTEGER,
+  discount_amount NUMERIC(10, 2),
+  coupon_code TEXT,
+  gst_percent INTEGER,
+  gst_amount NUMERIC(10, 2),
+  subtotal NUMERIC(10, 2),
   currency TEXT NOT NULL DEFAULT 'INR',
   status TEXT NOT NULL DEFAULT 'pending',
   provider TEXT,
@@ -103,7 +110,7 @@ CREATE TABLE IF NOT EXISTS mentedge.internship_payments (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT internship_payments_status_check
-    CHECK (status IN ('pending', 'paid', 'failed', 'refunded'))
+    CHECK (status IN ('pending', 'paid', 'failed', 'refunded', 'cancelled'))
 );
 
 CREATE INDEX IF NOT EXISTS internships_created_by_idx

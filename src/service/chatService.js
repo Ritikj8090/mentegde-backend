@@ -1,24 +1,45 @@
 const chatRepository = require("../Repository/chatRepository");
 
+const resolveUserRole = async (userId) => {
+  const role = await chatRepository.getUserRole(userId);
+  if (!role) {
+    throw new Error("User not found");
+  }
+  return role;
+};
+
 const chatService = {
-  sendMessage: async (senderId, receiverId, message) => {
+  sendMessage: async (senderId, receiverId, message, roles = {}) => {
+    const senderRole = roles.senderRole || (await resolveUserRole(senderId));
+    const receiverRole = roles.receiverRole || (await resolveUserRole(receiverId));
+
     let conversation = await chatRepository.getConversationBetweenUsers(
       senderId,
-      receiverId
+      receiverId,
+      senderRole,
+      receiverRole
     );
 
     if (!conversation) {
       conversation = await chatRepository.createConversation(
         senderId,
-        receiverId
+        receiverId,
+        senderRole,
+        receiverRole
       );
     }
 
     const savedMessage = await chatRepository.saveMessage({
       conversationId: conversation.id,
       senderId,
+      senderRole,
       message,
     });
+
+    await chatRepository.updateConversationLastMessage(
+      conversation.id,
+      message
+    );
 
     return { conversation, savedMessage };
   },
@@ -63,7 +84,11 @@ const chatService = {
   getConversations: async (req, res) => {
     try {
       const userId = req.user.id; // ✅ We use authenticated user
-      const conversations = await chatRepository.getUserConversations(userId);
+      const userRole = req.user.role;
+      const conversations = await chatRepository.getUserConversations(
+        userId,
+        userRole
+      );
 
       return res.status(200).json({
         resultStatus: "S",

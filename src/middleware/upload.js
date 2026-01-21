@@ -33,6 +33,11 @@ const storage = new CloudinaryStorage({
       resourceType = file.mimetype?.startsWith("image/") ? "image" : "raw";
     }
 
+    if (file.fieldname === "chat_files") {
+      folder = "chat_files";
+      resourceType = file.mimetype?.startsWith("image/") ? "image" : "raw";
+    }
+
     return {
       folder,
       resource_type: resourceType,

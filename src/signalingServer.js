@@ -77,6 +77,9 @@ async function createWebSocketServer(server) {
 
   server.on("upgrade", async (request, socket, head) => {
     const url = new URL(request.url, `https://${request.headers.host}`);
+    if (url.pathname === "/chat") {
+      return;
+    }
     const token = url.searchParams.get("token");
 
     if (!token) {
@@ -575,7 +578,9 @@ async function createWebSocketServer(server) {
             console.log(`✅ Message ACK received for ${messageId}`);
             pendingAcks.delete(messageId);
             await db.query(
-              `UPDATE mentor.messages SET status = 'delivered', delivered_at = now() WHERE id = $1`,
+              `UPDATE mentedge.chat_messages
+               SET status = 'delivered', delivered_at = now(), updated_at = now()
+               WHERE id = $1`,
               [messageId]
             );
           }
@@ -725,7 +730,9 @@ async function createWebSocketServer(server) {
           const { conversationId, messageIds } = payload;
           for (const messageId of messageIds) {
             await db.query(
-              `UPDATE mentor.messages SET status='delivered', delivered_at=NOW() WHERE id = $1`,
+              `UPDATE mentedge.chat_messages
+               SET status = 'delivered', delivered_at = NOW(), updated_at = NOW()
+               WHERE id = $1`,
               [messageId]
             );
           }

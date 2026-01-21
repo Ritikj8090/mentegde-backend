@@ -22,11 +22,8 @@ const authenticate = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, SECRET_KEY);
-
     if (
-      !decoded.is_active &&
-      !req.path.includes("onboard") &&
-      !req.path.includes("verify")
+      !decoded.gender
     ) {
       return res
         .status(403)

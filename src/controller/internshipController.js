@@ -17,21 +17,27 @@ const BASE_SELECT_WITH_DOMAINS = `
         json_build_object(
           'id', d.id,
           'domain_name', d.domain_name,
-          'skills', d.skills,
-          'tasks', d.tasks,
-          'hours', d.hours,
-          'start_date', to_char(d.start_date, 'YYYY-MM-DD'),
-          'end_date', to_char(d.end_date, 'YYYY-MM-DD'),
+          'domain_title', d.domain_title,
+          'domain_description', d.domain_description,
+          'skills_required', d.skills_required,
+          'tools_used', d.tools_used,
+          'tags', d.tags,
+          'weekly_hours', d.weekly_hours,
           'duration', d.duration,
-          'view_details', d.view_details,
-          'limit_value', d.limit_value,
+          'start_date', d.start_date,
+          'end_date', d.end_date,
+          'application_deadline', d.application_deadline,
+          'difficulty_level', d.difficulty_level,
+          'marketplace_category', d.marketplace_category,
+          'max_seats', d.max_seats,
+          'join_count', d.join_count,
           'seats_left', d.seats_left,
-          'join_count', d.join_count
+          'certificate_provided', d.certificate_provided
         )
       ) FILTER (WHERE d.id IS NOT NULL),
     '[]') AS domains
-  FROM mentor.internships i
-  LEFT JOIN mentor.internship_domains d ON i.id = d.internship_id
+  FROM mentedge.internships i
+  LEFT JOIN mentedge.internship_domains d ON i.id = d.internship_id
 `;
 
 const normalizeMilestoneStatus = (status) => {
@@ -1130,8 +1136,23 @@ const getCurrentMentorWorkboard = async (req, res) => {
             'due_date', a.due_date,
             'created_by', a.created_by,
             'assignees', COALESCE(aa.assignees, '[]'::json),
-            'progress', json_build_object(
+            'submissions', COALESCE(sub.submissions, '[]'::json),
+            'created_at', a.created_at,
+            'updated_at', a.updated_at
+          )
+          ORDER BY a.created_at
+        ) AS assignments
+        FROM mentedge.assignments a
+        LEFT JOIN LATERAL (
+          SELECT json_agg(aa.intern_id ORDER BY aa.assigned_at) AS assignees
+          FROM mentedge.assignment_assignments aa
+          WHERE aa.assignment_id = a.id
+        ) aa ON true
+        LEFT JOIN LATERAL (
+          SELECT json_agg(
+            json_build_object(
               'id', s.id,
+              'intern_id', s.intern_id,
               'status', COALESCE(s.status, 'not_started'),
               'text_content', s.text_content,
               'score', s.score,
@@ -1139,20 +1160,12 @@ const getCurrentMentorWorkboard = async (req, res) => {
               'submitted_at', s.submitted_at,
               'graded_at', s.graded_at,
               'updated_at', s.updated_at
-            ),
-            'created_at', a.created_at,
-            'updated_at', a.updated_at
-          )
-          ORDER BY a.created_at
-        ) AS assignments
-        FROM mentedge.assignments a
-        LEFT JOIN mentedge.assignment_submissions s
-          ON s.assignment_id = a.id AND s.intern_id = $2
-        LEFT JOIN LATERAL (
-          SELECT json_agg(aa.intern_id ORDER BY aa.assigned_at) AS assignees
-          FROM mentedge.assignment_assignments aa
-          WHERE aa.assignment_id = a.id
-        ) aa ON true
+            )
+            ORDER BY s.submitted_at
+          ) AS submissions
+          FROM mentedge.assignment_submissions s
+          WHERE s.assignment_id = a.id
+        ) sub ON true
         WHERE a.milestone_id = m.id
       ) a ON true
       WHERE w.internship_id = $1
@@ -1351,8 +1364,13 @@ const getInternWorkboard = async (req, res) => {
 
 const getDomainInterns = async (req, res) => {
   try {
-    const mentorId = req.user.id;
+    const userId = req.user?.id;
+    const role = req.user?.role;
     const { internshipId, domainName } = req.params;
+
+    if (!userId || !role) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
 
     if (!internshipId || !domainName) {
       return res
@@ -1360,36 +1378,62 @@ const getDomainInterns = async (req, res) => {
         .json({ message: "internshipId and domainName are required" });
     }
 
-    const result = await db.query(
-      `
-      SELECT
-        u.id,
-        u.full_name,
-        u.email,
-        u.avatar,
-        u.created_at,
-        j.joined_at,
-        d.domain_name
-      FROM mentedge.internship_joined j
-      JOIN mentedge.internship_domains d ON d.id = j.domain_id
-      JOIN mentedge.users u ON u.id = j.intern_id
-      JOIN mentedge.internship_hosts h
-        ON h.internship_id = j.internship_id
-       AND h.mentor_id = $3
-       AND (
-         h.role = 'host'
-         OR (
-           h.role = 'co-host'
-           AND h.invite_status = 'accepted'
-           AND h.domain = d.domain_name
+    const includeAllDomains = domainName === "all";
+    let result;
+
+    if (role === "mentor") {
+      result = await db.query(
+        `
+        SELECT
+          u.id,
+          u.full_name,
+          u.email,
+          u.avatar,
+          u.created_at,
+          j.joined_at,
+          d.domain_name
+        FROM mentedge.internship_joined j
+        JOIN mentedge.internship_domains d ON d.id = j.domain_id
+        JOIN mentedge.users u ON u.id = j.intern_id
+        JOIN mentedge.internship_hosts h
+          ON h.internship_id = j.internship_id
+         AND h.mentor_id = $3
+         AND (
+           h.role = 'host'
+           OR (
+             h.role = 'co-host'
+             AND h.invite_status = 'accepted'
+           )
          )
-       )
-      WHERE j.internship_id = $1
-        AND d.domain_name = $2
-      ORDER BY j.joined_at DESC
-      `,
-      [internshipId, domainName, mentorId]
-    );
+        WHERE j.internship_id = $1
+          AND ($4::boolean OR d.domain_name = $2)
+        ORDER BY j.joined_at DESC
+        `,
+        [internshipId, domainName, userId, includeAllDomains]
+      );
+    } else if (role === "user") {
+      result = await db.query(
+        `
+        SELECT
+          u.id,
+          u.full_name,
+          u.email,
+          u.avatar,
+          u.created_at,
+          j.joined_at,
+          d.domain_name
+        FROM mentedge.internship_joined j
+        JOIN mentedge.internship_domains d ON d.id = j.domain_id
+        JOIN mentedge.users u ON u.id = j.intern_id
+        WHERE j.internship_id = $1
+          AND ($3::boolean OR d.domain_name = $2)
+        ORDER BY j.joined_at DESC
+        `,
+        [internshipId, domainName, includeAllDomains]
+      );
+    } else {
+      return res.status(403).json({ message: "Forbidden" });
+    }
 
     return res.status(200).json(result.rows);
   } catch (err) {
@@ -2199,6 +2243,19 @@ const getAvailableInternshipsForIntern = async (req, res) => {
           SELECT 1
           FROM mentedge.internship_domains d
           WHERE d.internship_id = i.id
+            AND d.application_deadline IS NOT NULL
+            AND d.application_deadline >= CURRENT_DATE
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM mentedge.internship_joined j
+          WHERE j.intern_id = $1
+            AND j.internship_id = i.id
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM mentedge.internship_domains d
+          WHERE d.internship_id = i.id
             AND (d.max_seats IS NULL OR d.join_count < d.max_seats)
             AND NOT EXISTS (
               SELECT 1
@@ -2622,10 +2679,94 @@ const createInternship = async (req, res) => {
 
     await client.query("COMMIT");
 
-    res.status(201).json({
-      message: "Internship created",
-      internship_id: internshipId,
-    });
+    const createdResult = await client.query(
+      `
+      SELECT 
+        i.id,
+        i.internship_title,
+        i.description,
+        i.price,
+        i.status,
+        i.computed_status,
+        i.approval_required,
+        i.created_at,
+
+        COALESCE((
+          SELECT json_object_agg(
+            d.domain_name,
+            json_build_object(
+              'domain_name', d.domain_name,
+              'domain_description', d.domain_description,
+              'skills_required', d.skills_required,
+              'tools_used', d.tools_used,
+              'tags', d.tags,
+              'weekly_hours', d.weekly_hours,
+              'duration', d.duration,
+              'start_date', d.start_date,
+              'end_date', d.end_date,
+              'application_deadline', d.application_deadline,
+              'difficulty_level', d.difficulty_level,
+              'marketplace_category', d.marketplace_category,
+              'max_seats', d.max_seats,
+              'join_count', d.join_count,
+              'seats_left', d.seats_left
+            )
+          ) FILTER (WHERE d.id IS NOT NULL)
+          FROM mentedge.internship_domains d
+          WHERE d.internship_id = i.id
+        ), '{}'::json) AS domains,
+
+        (
+          SELECT json_build_object(
+            'role', h.role,
+            'domain', h.domain,
+            'invite_status', h.invite_status
+          )
+          FROM mentedge.internship_hosts h
+          WHERE h.internship_id = i.id
+            AND h.mentor_id = $2
+        ) AS my_role,
+
+        COALESCE((
+          SELECT json_agg(
+            json_build_object(
+              'id', m.id,
+              'full_name', m.full_name,
+              'avatar', m.avatar,
+              'role', h.role,
+              'domain', h.domain,
+              'invite_status', h.invite_status
+            )
+          )
+          FROM mentedge.internship_hosts h
+          JOIN mentedge.mentors m ON m.id = h.mentor_id
+          WHERE h.internship_id = i.id
+            AND h.role = 'host'
+        ), '[]'::json) AS host,
+
+        COALESCE((
+          SELECT json_agg(
+            json_build_object(
+              'id', m.id,
+              'full_name', m.full_name,
+              'avatar', m.avatar,
+              'role', h.role,
+              'domain', h.domain,
+              'invite_status', h.invite_status
+            )
+          )
+          FROM mentedge.internship_hosts h
+          JOIN mentedge.mentors m ON m.id = h.mentor_id
+          WHERE h.internship_id = i.id
+            AND h.role = 'co-host'
+        ), '[]'::json) AS co_host
+      FROM mentedge.internships_with_computed_status i
+      WHERE i.id = $1
+      `,
+      [internshipId, mentorId]
+    );
+
+    res.status(201).json(createdResult.rows[0]);
   } catch (err) {
     await client.query("ROLLBACK");
     console.error(err);
@@ -2745,6 +2886,7 @@ WHERE EXISTS (
   WHERE h.internship_id = i.id
     AND h.mentor_id = $1 AND h.role = 'host'
 )
+AND i.status <> 'published'
 ORDER BY i.created_at DESC;
 `;
 
@@ -2797,7 +2939,6 @@ const getScheduledMentorInternships = async (req, res) => {
     WHERE d.internship_id = i.id
       AND d.start_date IS NOT NULL
       AND d.start_date > CURRENT_DATE
-      AND (d.application_deadline IS NULL OR d.application_deadline < CURRENT_DATE)
   ), '{}'::json) AS domains,
 
   (
@@ -2855,13 +2996,13 @@ WHERE EXISTS (
       OR (h.role = 'co-host' AND h.invite_status = 'accepted')
     )
 )
+AND i.status = 'published'
 AND EXISTS (
   SELECT 1
   FROM mentedge.internship_domains d
   WHERE d.internship_id = i.id
     AND d.start_date IS NOT NULL
     AND d.start_date > CURRENT_DATE
-    AND (d.application_deadline IS NULL OR d.application_deadline < CURRENT_DATE)
 )
 ORDER BY i.created_at DESC;
 `;
@@ -2914,8 +3055,7 @@ const getOngoingMentorInternships = async (req, res) => {
     FROM mentedge.internship_domains d
     WHERE d.internship_id = i.id
       AND d.start_date IS NOT NULL
-      AND d.end_date IS NOT NULL
-      AND CURRENT_DATE BETWEEN d.start_date AND d.end_date
+      AND CURRENT_DATE >= d.start_date
   ), '{}'::json) AS domains,
 
   (
@@ -2979,8 +3119,7 @@ AND EXISTS (
   FROM mentedge.internship_domains d
   WHERE d.internship_id = i.id
     AND d.start_date IS NOT NULL
-    AND d.end_date IS NOT NULL
-    AND CURRENT_DATE BETWEEN d.start_date AND d.end_date
+    AND CURRENT_DATE >= d.start_date
 )
 ORDER BY i.created_at DESC;
 `;
@@ -3089,6 +3228,7 @@ const getCurrentRequestedInternships = async (req, res) => {
 
       WHERE h.mentor_id = $1
         AND h.role = 'co-host'
+        AND h.invite_status = 'pending'
         AND i.status IN ('draft', 'submitted')
 
       ORDER BY i.created_at DESC;
@@ -3418,13 +3558,82 @@ const approveAndPost = async (req, res) => {
 const getInternshipById = async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await pool.query(
+    const result = await db.query(
       `
-      ${BASE_SELECT_WITH_DOMAINS}
+      SELECT 
+        i.id,
+        i.internship_title,
+        i.description,
+        i.price,
+        i.status,
+        i.computed_status,
+        i.approval_required,
+        i.created_at,
+
+        COALESCE((
+          SELECT json_object_agg(
+            d.domain_name,
+            json_build_object(
+              'domain_name', d.domain_name,
+              'domain_title', d.domain_title,
+              'domain_description', d.domain_description,
+              'skills_required', d.skills_required,
+              'tools_used', d.tools_used,
+              'tags', d.tags,
+              'weekly_hours', d.weekly_hours,
+              'duration', d.duration,
+              'start_date', d.start_date,
+              'end_date', d.end_date,
+              'application_deadline', d.application_deadline,
+              'difficulty_level', d.difficulty_level,
+              'marketplace_category', d.marketplace_category,
+              'max_seats', d.max_seats,
+              'join_count', d.join_count,
+              'seats_left', d.seats_left,
+              'certificate_provided', d.certificate_provided
+            )
+          ) FILTER (WHERE d.id IS NOT NULL)
+          FROM mentedge.internship_domains d
+          WHERE d.internship_id = i.id
+        ), '{}'::json) AS domains,
+
+        COALESCE((
+          SELECT json_agg(
+            json_build_object(
+              'id', m.id,
+              'full_name', m.full_name,
+              'avatar', m.avatar,
+              'role', h.role,
+              'domain', h.domain,
+              'invite_status', h.invite_status
+            )
+          )
+          FROM mentedge.internship_hosts h
+          JOIN mentedge.mentors m ON m.id = h.mentor_id
+          WHERE h.internship_id = i.id
+            AND h.role = 'host'
+        ), '[]'::json) AS host,
+
+        COALESCE((
+          SELECT json_agg(
+            json_build_object(
+              'id', m.id,
+              'full_name', m.full_name,
+              'avatar', m.avatar,
+              'role', h.role,
+              'domain', h.domain,
+              'invite_status', h.invite_status
+            )
+          )
+          FROM mentedge.internship_hosts h
+          JOIN mentedge.mentors m ON m.id = h.mentor_id
+          WHERE h.internship_id = i.id
+            AND h.role = 'co-host'
+        ), '[]'::json) AS co_host
+      FROM mentedge.internships_with_computed_status i
       WHERE i.id = $1
-      GROUP BY i.id
       LIMIT 1
-    `,
+      `,
       [id]
     );
 
@@ -3584,7 +3793,94 @@ const updateInternship = async (req, res) => {
 
     await client.query("COMMIT");
 
-    res.json({ message: "Internship updated successfully" });
+    const updatedResult = await client.query(
+      `
+      SELECT 
+        i.id,
+        i.internship_title,
+        i.description,
+        i.price,
+        i.status,
+        i.computed_status,
+        i.approval_required,
+        i.created_at,
+
+        COALESCE((
+          SELECT json_object_agg(
+            d.domain_name,
+            json_build_object(
+              'domain_name', d.domain_name,
+              'domain_description', d.domain_description,
+              'skills_required', d.skills_required,
+              'tools_used', d.tools_used,
+              'tags', d.tags,
+              'weekly_hours', d.weekly_hours,
+              'duration', d.duration,
+              'start_date', d.start_date,
+              'end_date', d.end_date,
+              'application_deadline', d.application_deadline,
+              'difficulty_level', d.difficulty_level,
+              'marketplace_category', d.marketplace_category,
+              'max_seats', d.max_seats,
+              'join_count', d.join_count,
+              'seats_left', d.seats_left
+            )
+          ) FILTER (WHERE d.id IS NOT NULL)
+          FROM mentedge.internship_domains d
+          WHERE d.internship_id = i.id
+        ), '{}'::json) AS domains,
+
+        (
+          SELECT json_build_object(
+            'role', h.role,
+            'domain', h.domain,
+            'invite_status', h.invite_status
+          )
+          FROM mentedge.internship_hosts h
+          WHERE h.internship_id = i.id
+            AND h.mentor_id = $2
+        ) AS my_role,
+
+        COALESCE((
+          SELECT json_agg(
+            json_build_object(
+              'id', m.id,
+              'full_name', m.full_name,
+              'avatar', m.avatar,
+              'role', h.role,
+              'domain', h.domain,
+              'invite_status', h.invite_status
+            )
+          )
+          FROM mentedge.internship_hosts h
+          JOIN mentedge.mentors m ON m.id = h.mentor_id
+          WHERE h.internship_id = i.id
+            AND h.role = 'host'
+        ), '[]'::json) AS host,
+
+        COALESCE((
+          SELECT json_agg(
+            json_build_object(
+              'id', m.id,
+              'full_name', m.full_name,
+              'avatar', m.avatar,
+              'role', h.role,
+              'domain', h.domain,
+              'invite_status', h.invite_status
+            )
+          )
+          FROM mentedge.internship_hosts h
+          JOIN mentedge.mentors m ON m.id = h.mentor_id
+          WHERE h.internship_id = i.id
+            AND h.role = 'co-host'
+        ), '[]'::json) AS co_host
+      FROM mentedge.internships_with_computed_status i
+      WHERE i.id = $1
+      `,
+      [internshipId, mentorId]
+    );
+
+    res.json(updatedResult.rows[0]);
   } catch (err) {
     await client.query("ROLLBACK");
     console.error(err);
@@ -4237,7 +4533,6 @@ const getOngoingInternshipsWithProgress = async (req, res) => {
           ) AS assignments_graded
       ) p ON true
       WHERE j.intern_id = $1
-        AND CURRENT_DATE BETWEEN d.start_date AND d.end_date
       ORDER BY d.start_date ASC
       `,
       [internId]

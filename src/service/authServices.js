@@ -24,7 +24,7 @@ const authService = {
 
       const { user, token, websocketToken } = await authRepository.loginUser(
         email,
-        password
+        password,
       );
 
       res.cookie("token", token, {
@@ -58,7 +58,7 @@ const authService = {
 
       const { user, token, websocketToken } = await authRepository.loginUser(
         email,
-        password
+        password,
       );
 
       if (!user || !token) {
@@ -96,34 +96,6 @@ const authService = {
       }
 
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-      // Fetch Google access token
-      const googleTokenResult = await db.query(
-        `SELECT access_token FROM mentor.oauth_tokens WHERE user_id = $1 AND provider = 'google'`,
-        [decoded.id]
-      );
-
-      const googleAccessToken = googleTokenResult.rows[0]?.access_token;
-
-      if (googleAccessToken) {
-        const { google } = require("googleapis");
-        const oauth2Client = new google.auth.OAuth2();
-
-        try {
-          oauth2Client.setCredentials({ access_token: googleAccessToken });
-          await oauth2Client.revokeToken(googleAccessToken);
-          console.log("Google access token revoked successfully.");
-        } catch (revokeError) {
-          if (
-            revokeError.response &&
-            revokeError.response.data.error === "invalid_token"
-          ) {
-            console.warn("Google access token was already invalid or expired.");
-          } else {
-            console.error("Error revoking Google access token:", revokeError);
-          }
-        }
-      }
 
       // Wait for the Redis client to connect
       const client = await clientPromise;
@@ -188,7 +160,8 @@ const authService = {
       ) {
         return res.status(400).json({ message: "All fields are required" });
       }
-      const {token, websocketToken, resultContent, resultMessage} = await authRepository.oboardingUser(req);
+      const { token, websocketToken, resultContent, resultMessage } =
+        await authRepository.oboardingUser(req);
 
       res.cookie("token", token, {
         httpOnly: true,
@@ -197,9 +170,7 @@ const authService = {
         maxAge: 3600000,
         path: "/",
       });
-      res
-        .status(200)
-        .json({ message: resultMessage, data: resultContent });
+      res.status(200).json({ message: resultMessage, data: resultContent });
     } catch (error) {
       res
         .status(500)
@@ -215,13 +186,19 @@ const authService = {
         return res.status(401).json({ message: "Unauthorized" });
       }
 
-      const { dbUser } = await authRepository.findUser({ id: user.id });
+      if (user.role === "user") {
+        const { dbUser } = await authRepository.findUser({ id: user.id });
 
-      res.status(200).json({ message: "User found", data: dbUser });
+        res.status(200).json({ message: "User found", data: dbUser });
+      }
+
+      if (user.role === "mentor") {
+        const { dbUser } = await authRepository.findMentor({ id: user.id });
+        res.status(200).json({ message: "Mentor found", data: dbUser });
+      }
     } catch (error) {
       res.status(500).json({ message: error.message });
     }
-
   },
 
   findUser: async (req, res) => {
@@ -277,7 +254,7 @@ const authService = {
 
       const { user, token, websocketToken } = await authRepository.loginMentor(
         email,
-        password
+        password,
       );
 
       res.cookie("token", token, {
@@ -311,7 +288,7 @@ const authService = {
 
       const { user, token, websocketToken } = await authRepository.loginMentor(
         email,
-        password
+        password,
       );
 
       if (!user || !token) {
@@ -386,7 +363,8 @@ const authService = {
       ) {
         return res.status(400).json({ message: "All fields are required" });
       }
-      const {token, websocketToken, resultContent, resultMessage} = await authRepository.oboardingMentor(req);
+      const { token, websocketToken, resultContent, resultMessage } =
+        await authRepository.oboardingMentor(req);
 
       res.cookie("token", token, {
         httpOnly: true,
@@ -395,9 +373,7 @@ const authService = {
         maxAge: 3600000,
         path: "/",
       });
-      res
-        .status(200)
-        .json({ message: resultMessage, data: resultContent });
+      res.status(200).json({ message: resultMessage, data: resultContent });
     } catch (error) {
       res
         .status(500)
@@ -407,7 +383,6 @@ const authService = {
 
   findMentors: async (req, res) => {
     try {
-
       let excludeId = null;
       if (req.user?.role === "mentor") {
         excludeId = req.user.id;
@@ -422,7 +397,7 @@ const authService = {
         }
       }
 
-      const {dbUser} = await authRepository.findMentors({
+      const { dbUser } = await authRepository.findMentors({
         ...req.body,
         excludeId,
       });
@@ -436,8 +411,7 @@ const authService = {
 
   findMentor: async (req, res) => {
     try {
-
-      const {dbUser} = await authRepository.findMentor(req.body);
+      const { dbUser } = await authRepository.findMentor(req.body);
       res.status(200).json({
         data: dbUser,
       });
@@ -468,7 +442,7 @@ const authService = {
       const isBlacklisted = await client.get(`blacklist:${token}`);
       if (isBlacklisted) {
         console.log(
-          "Google OAuth: Blacklisted token detected even in callback."
+          "Google OAuth: Blacklisted token detected even in callback.",
         );
         return res.redirect(`${config.baseURL}/signin?error=session_expired`);
       }
@@ -518,9 +492,8 @@ const authService = {
       }
 
       // Check Postgres via repository
-      const isAvailable = await authRepository.checkUsernameAvailability(
-        normalized
-      );
+      const isAvailable =
+        await authRepository.checkUsernameAvailability(normalized);
 
       // Cache result for 30 minutes
       await redis.setEx(redisKey, 1800, isAvailable.toString());
@@ -550,9 +523,8 @@ const authService = {
       }
 
       // Check Postgres via repository
-      const isAvailable = await authRepository.checkEmailAvailability(
-        normalized
-      );
+      const isAvailable =
+        await authRepository.checkEmailAvailability(normalized);
 
       // Cache result for 30 minutes
       await redis.setEx(redisKey, 1800, isAvailable.toString());
@@ -592,7 +564,7 @@ const authService = {
           is_active: user.is_active, // this should now be true
         },
         SECRET_KEY,
-        { expiresIn: "1h" }
+        { expiresIn: "1h" },
       );
 
       res.cookie("token", token, {
@@ -626,7 +598,7 @@ const authService = {
       JOIN mentor.mentors m ON m.user_id = u.id
       WHERE u.id = $1
     `,
-        [userId]
+        [userId],
       );
 
       const mentor = result.rows[0];
@@ -651,7 +623,7 @@ const authService = {
        WHERE mentor_id = $1 
        AND start_time <= NOW() AND end_time >= NOW()
        ORDER BY start_time DESC LIMIT 1`,
-        [userId]
+        [userId],
       );
       if (sessionResult.rows.length) {
         const rawDuration = sessionResult.rows[0].duration;
@@ -665,7 +637,7 @@ const authService = {
           ttlSeconds = rawDuration;
         } else {
           console.warn(
-            "⚠️ Unrecognized duration format. Falling back to 3600s."
+            "⚠️ Unrecognized duration format. Falling back to 3600s.",
           );
           ttlSeconds = 3600;
         }
@@ -704,7 +676,7 @@ const authService = {
             await client.lPush("liveMentors", JSON.stringify(sanitized));
           } else {
             console.log(
-              "Skipped pushing duplicate or incomplete mentor entry."
+              "Skipped pushing duplicate or incomplete mentor entry.",
             );
           }
 
@@ -728,7 +700,7 @@ const authService = {
       // Notify frontend
       await client.publish(
         "mentor:liveStatus",
-        JSON.stringify({ mentorId: userId, isLive })
+        JSON.stringify({ mentorId: userId, isLive }),
       );
 
       return res.status(200).json({
@@ -912,7 +884,7 @@ const authService = {
           resume,
           certificatesJSON, // ✅ JSON-safe
           userId,
-        ]
+        ],
       );
 
       res.status(200).json({
@@ -949,7 +921,7 @@ const authService = {
       WHERE id = $4
       RETURNING *;
       `,
-        [profilePic, resume, certificatesJSON, mentorId]
+        [profilePic, resume, certificatesJSON, mentorId],
       );
 
       res.status(200).json({

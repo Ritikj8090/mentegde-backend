@@ -199,13 +199,7 @@ const authRepository = {
 
   findUser: async ({ id }) => {
     try {
-      const findUserQuery = `SELECT * FROM mentedge.users WHERE id = $1`;
-      const findUserEducationQuery = `SELECT * FROM mentedge.educations WHERE owner_id = $1 AND owner_type = 'user'`;
-      const findUserExperienceQuery = `SELECT * FROM mentedge.experiences WHERE owner_id = $1 AND owner_type = 'user'`;
-      const findUserSkillQuery = `SELECT * FROM mentedge.skills WHERE owner_id = $1 AND owner_type = 'user'`;
-      const findUserLanguageQuery = `SELECT * FROM mentedge.languages WHERE owner_id = $1 AND owner_type = 'user'`;
-      const findUserCertificateQuery = `SELECT * FROM mentedge.certificates WHERE owner_id = $1 AND owner_type = 'user'`;
-      const findUserInterestQuery = `SELECT * FROM mentedge.interests WHERE owner_id = $1 AND owner_type = 'user'`;
+      const findUserQuery = `SELECT * FROM mentedge.users WHERE id = $1 OR email = $2 OR full_name ILIKE '%' || $3 || '%'`;
 
       const result = await db.query({
         text: findUserQuery,
@@ -215,38 +209,6 @@ const authRepository = {
       if (result.rowCount === 0) {
         throw new Error("User not found");
       }
-
-      const educations = await db.query({
-        text: findUserEducationQuery,
-        values: [id],
-      });
-      const experiences = await db.query({
-        text: findUserExperienceQuery,
-        values: [id],
-      });
-      const skills = await db.query({
-        text: findUserSkillQuery,
-        values: [id],
-      });
-      const languages = await db.query({
-        text: findUserLanguageQuery,
-        values: [id],
-      });
-      const certificates = await db.query({
-        text: findUserCertificateQuery,
-        values: [id],
-      });
-      const interests = await db.query({
-        text: findUserInterestQuery,
-        values: [id],
-      });
-
-      result.rows[0].educations = educations.rows;
-      result.rows[0].experiences = experiences.rows;
-      result.rows[0].skills = skills.rows;
-      result.rows[0].languages = languages.rows;
-      result.rows[0].certificates = certificates.rows;
-      result.rows[0].interests = interests.rows;
 
       const { password: _, ...safeUser } = result.rows[0];
       return { dbUser: safeUser };
@@ -442,15 +404,7 @@ const authRepository = {
 
   findMentor: async ({ id, email, full_name }) => {
     try {
-      console.log(full_name, email, id);
       const findMentorQuery = `SELECT * FROM mentedge.mentors WHERE id = $1 OR email = $2 OR full_name ILIKE '%' || $3 || '%'`;
-      const findMentorEducationQuery = `SELECT * FROM mentedge.educations WHERE owner_id = $1 AND owner_type = 'mentor'`;
-      const findMentorExperienceQuery = `SELECT * FROM mentedge.experiences WHERE owner_id = $1 AND owner_type = 'mentor'`;
-      const findMentorSkillQuery = `SELECT * FROM mentedge.skills WHERE owner_id = $1 AND owner_type = 'mentor'`;
-      const findMentorLanguageQuery = `SELECT * FROM mentedge.languages WHERE owner_id = $1 AND owner_type = 'mentor'`;
-      const findMentorCertificateQuery = `SELECT * FROM mentedge.certificates WHERE owner_id = $1 AND owner_type = 'mentor'`;
-      const findMentorInterestQuery = `SELECT * FROM mentedge.interests WHERE owner_id = $1 AND owner_type = 'mentor'`;
-
       const result = await db.query({
         text: findMentorQuery,
         values: [id, email, full_name],
@@ -459,38 +413,6 @@ const authRepository = {
       if (result.rowCount === 0) {
         throw new Error("Mentor not found");
       }
-
-      const educations = await db.query({
-        text: findMentorEducationQuery,
-        values: [result.rows[0].id],
-      });
-      const experiences = await db.query({
-        text: findMentorExperienceQuery,
-        values: [result.rows[0].id],
-      });
-      const skills = await db.query({
-        text: findMentorSkillQuery,
-        values: [result.rows[0].id],
-      });
-      const languages = await db.query({
-        text: findMentorLanguageQuery,
-        values: [result.rows[0].id],
-      });
-      const certificates = await db.query({
-        text: findMentorCertificateQuery,
-        values: [result.rows[0].id],
-      });
-      const interests = await db.query({
-        text: findMentorInterestQuery,
-        values: [result.rows[0].id],
-      });
-
-      result.rows[0].educations = educations.rows;
-      result.rows[0].experiences = experiences.rows;
-      result.rows[0].skills = skills.rows;
-      result.rows[0].languages = languages.rows;
-      result.rows[0].certificates = certificates.rows;
-      result.rows[0].interests = interests.rows;
 
       const { password: _, ...safeUser } = result.rows[0];
       return { dbUser: safeUser };
@@ -528,60 +450,60 @@ const authRepository = {
     }
   },
 
-  findOrCreateGoogleUser: async (
-    profile,
-    accessToken,
-    refreshToken,
-    expiresIn,
-    role = "user"
-  ) => {
-    try {
-      const existingUser = await authRepository.findUser({
-        email: profile.emails[0].value,
-      });
-      if (existingUser && existingUser.resultContent) {
-        await db.query({
-          text: "INSERT INTO mentor.oauth_tokens (user_id, provider, access_token, refresh_token, expires_at, scope) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (user_id, provider) DO UPDATE SET access_token = $3, refresh_token = $4, expires_at = $5",
-          values: [
-            existingUser.resultContent.id,
-            "google",
-            accessToken,
-            refreshToken,
-            new Date(Date.now() + expiresIn * 1000),
-            "profile email",
-          ],
-        });
-        return existingUser.resultContent;
-      }
+  // findOrCreateGoogleUser: async (
+  //   profile,
+  //   accessToken,
+  //   refreshToken,
+  //   expiresIn,
+  //   role = "user"
+  // ) => {
+  //   try {
+  //     const existingUser = await authRepository.findUser({
+  //       email: profile.emails[0].value,
+  //     });
+  //     if (existingUser && existingUser.resultContent) {
+  //       await db.query({
+  //         text: "INSERT INTO mentor.oauth_tokens (user_id, provider, access_token, refresh_token, expires_at, scope) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (user_id, provider) DO UPDATE SET access_token = $3, refresh_token = $4, expires_at = $5",
+  //         values: [
+  //           existingUser.resultContent.id,
+  //           "google",
+  //           accessToken,
+  //           refreshToken,
+  //           new Date(Date.now() + expiresIn * 1000),
+  //           "profile email",
+  //         ],
+  //       });
+  //       return existingUser.resultContent;
+  //     }
 
-      const newUserData = {
-        email: profile.emails[0].value,
-        username: profile.displayName || profile.id,
-        google_id: profile.id,
-        display_name: profile.displayName,
-        role: role,
-      };
-      const newUser = await authRepository.createUser(newUserData);
-      const createdUser = newUser.resultContent;
+  //     const newUserData = {
+  //       email: profile.emails[0].value,
+  //       username: profile.displayName || profile.id,
+  //       google_id: profile.id,
+  //       display_name: profile.displayName,
+  //       role: role,
+  //     };
+  //     const newUser = await authRepository.createUser(newUserData);
+  //     const createdUser = newUser.resultContent;
 
-      await db.query({
-        text: "INSERT INTO mentor.oauth_tokens (user_id, provider, access_token, refresh_token, expires_at, scope) VALUES ($1, $2, $3, $4, $5, $6)",
-        values: [
-          createdUser.id,
-          "google",
-          accessToken,
-          refreshToken,
-          new Date(Date.now() + expiresIn * 1000),
-          "profile email",
-        ],
-      });
+  //     await db.query({
+  //       text: "INSERT INTO mentor.oauth_tokens (user_id, provider, access_token, refresh_token, expires_at, scope) VALUES ($1, $2, $3, $4, $5, $6)",
+  //       values: [
+  //         createdUser.id,
+  //         "google",
+  //         accessToken,
+  //         refreshToken,
+  //         new Date(Date.now() + expiresIn * 1000),
+  //         "profile email",
+  //       ],
+  //     });
 
-      return createdUser;
-    } catch (error) {
-      console.error("Error in findOrCreateGoogleUser:", error.message);
-      throw error;
-    }
-  },
+  //     return createdUser;
+  //   } catch (error) {
+  //     console.error("Error in findOrCreateGoogleUser:", error.message);
+  //     throw error;
+  //   }
+  // },
 
   checkUsernameAvailability: async (username) => {
     try {
