@@ -1,6 +1,10 @@
 const crypto = require("crypto");
 const Razorpay = require("razorpay");
 const db = require("../config/db");
+const {
+  ensureChannels,
+  addMemberToInternshipChannels,
+} = require("../service/internshipChatService");
 
 const getRazorpayClient = () => {
   const keyId = process.env.RAZORPAY_KEY_ID;
@@ -197,7 +201,7 @@ const verifyRazorpayPayment = async (req, res) => {
 
     const domainRes = await client.query(
       `
-      SELECT id, join_count, max_seats
+      SELECT id, join_count, max_seats, domain_name
       FROM mentedge.internship_domains
       WHERE id = $1 AND internship_id = $2
       FOR UPDATE
@@ -234,6 +238,15 @@ const verifyRazorpayPayment = async (req, res) => {
       WHERE id = $1
       `,
       [domainId]
+    );
+
+    await ensureChannels(client, internshipId);
+    await addMemberToInternshipChannels(
+      client,
+      internshipId,
+      internId,
+      "user",
+      domainRes.rows[0].domain_name
     );
 
     const paymentRes = await client.query(

@@ -6,6 +6,7 @@ const chatRepository = require("./Repository/chatRepository");
 async function createChatWebSocketServer(server) {
   const wss = new WebSocket.Server({ noServer: true });
   const userSockets = new Map(); // userId -> Set<WebSocket>
+  const internshipUsers = new Map(); // internshipId -> Set<userId>
 
   const subClient = redisClient.duplicate();
   await subClient.connect();
@@ -78,6 +79,7 @@ async function createChatWebSocketServer(server) {
     refreshPresence();
     const presenceInterval = setInterval(refreshPresence, 30000);
 
+    // Broadcast user is online to everyone
     redisClient.publish(
       "chat_realtime",
       JSON.stringify({
@@ -108,6 +110,62 @@ async function createChatWebSocketServer(server) {
       }
 
       switch (type) {
+        // ✅ ADD THIS NEW CASE - Handle userStatus from client
+        case "userStatus": {
+          const { internshipId, online } = payload || {};
+          
+          if (!internshipId) {
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                message: "internshipId is required",
+              })
+            );
+            return;
+          }
+
+          // Track users by internship
+          if (online) {
+            if (!internshipUsers.has(internshipId)) {
+              internshipUsers.set(internshipId, new Set());
+            }
+            internshipUsers.get(internshipId).add(userId);
+            ws.currentInternship = internshipId;
+
+            // Send current online users to this user
+            const onlineUsers = Array.from(internshipUsers.get(internshipId));
+            ws.send(
+              JSON.stringify({
+                type: "initialOnlineUsers",
+                payload: {
+                  userIds: onlineUsers,
+                },
+              })
+            );
+          } else {
+            if (internshipUsers.has(internshipId)) {
+              internshipUsers.get(internshipId).delete(userId);
+            }
+          }
+
+          // Broadcast status to all users
+          await redisClient.publish(
+            "chat_realtime",
+            JSON.stringify({
+              receiverId: "*",
+              payload: {
+                type: "userStatus",
+                payload: {
+                  userId,
+                  internshipId,
+                  online,
+                },
+              },
+            })
+          );
+          break;
+        }
+
         case "typing": {
           const { conversationId, isTyping } = payload || {};
           if (!conversationId) {
@@ -308,6 +366,12 @@ async function createChatWebSocketServer(server) {
     ws.on("close", () => {
       clearInterval(presenceInterval);
       redisClient.del(`chat_presence:${userId}`);
+      
+      // ✅ UPDATED - Remove from internship tracking
+      if (ws.currentInternship && internshipUsers.has(ws.currentInternship)) {
+        internshipUsers.get(ws.currentInternship).delete(userId);
+      }
+
       redisClient.publish(
         "chat_realtime",
         JSON.stringify({

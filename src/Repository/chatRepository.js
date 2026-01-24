@@ -199,8 +199,20 @@ const chatRepository = {
       `
       SELECT
         m.*,
+        COALESCE(u.full_name, mn.full_name) AS sender_name,
+        COALESCE(u.avatar, mn.avatar) AS sender_avatar,
         COALESCE(f.files, '[]'::json) AS files
       FROM mentedge.chat_messages m
+      LEFT JOIN LATERAL (
+        SELECT *
+        FROM mentedge.users u
+        WHERE m.sender_role = 'user' AND u.id = m.sender_id
+      ) u ON true
+      LEFT JOIN LATERAL (
+        SELECT *
+        FROM mentedge.mentors mn
+        WHERE m.sender_role = 'mentor' AND mn.id = m.sender_id
+      ) mn ON true
       LEFT JOIN LATERAL (
         SELECT json_agg(
           json_build_object(

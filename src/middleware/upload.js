@@ -8,40 +8,29 @@ const storage = new CloudinaryStorage({
     let folder = "profiles";
     let resourceType = "image";
 
-    if (file.fieldname === "resume") {
-      folder = "resumes";
-      resourceType = "raw"; // ✅ IMPORTANT
-    }
-
-    if (file.fieldname === "certificates") {
-      folder = "certificates";
-      resourceType = "raw"; // ✅ PDFs usually
-    }
-
-    if (file.fieldname === "concept_files") {
-      folder = "concept_files";
-      resourceType = file.mimetype?.startsWith("image/") ? "image" : "raw";
-    }
-
-    if (file.fieldname === "assignment_submission_files") {
-      folder = "assignment_submissions";
-      resourceType = file.mimetype?.startsWith("image/") ? "image" : "raw";
-    }
-
-    if (file.fieldname === "assignment_files") {
-      folder = "assignment_files";
-      resourceType = file.mimetype?.startsWith("image/") ? "image" : "raw";
+    if (file.fieldname === "resume" || file.fieldname === "certificates") {
+      folder = file.fieldname;
+      resourceType = "raw"; // resumes should download
     }
 
     if (file.fieldname === "chat_files") {
       folder = "chat_files";
-      resourceType = file.mimetype?.startsWith("image/") ? "image" : "raw";
+
+      if (file.mimetype === "application/pdf") {
+        resourceType = "image"; // ✅ previewable
+      } else if (file.mimetype.startsWith("image/")) {
+        resourceType = "image";
+      } else {
+        resourceType = "raw";
+      }
     }
 
     return {
       folder,
       resource_type: resourceType,
-      public_id: `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, "").replace(/\s+/g, "_")}`,
+      public_id: `${Date.now()}-${file.originalname
+        .replace(/\.[^/.]+$/, "")
+        .replace(/\s+/g, "_")}`,
     };
   },
 });

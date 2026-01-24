@@ -32,6 +32,7 @@ const {
   getCurrentMentorWorkboard,
   getInternWorkboard,
   getDomainInterns,
+  getInternshipMentors,
   uploadConceptFiles,
   getConceptFiles,
   deleteConceptFile,
@@ -72,6 +73,11 @@ router.get(
   "/:internshipId/domains/:domainName/interns",
   protect,
   getDomainInterns
+);
+router.get(
+  "/:internshipId/mentors",
+  protect,
+  getInternshipMentors
 );
 
 // -------------------------------

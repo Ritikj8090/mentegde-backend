@@ -1,5 +1,9 @@
 // /mnt/data/internshipController.js
 const db = require("../config/db");
+const {
+  ensureChannels,
+  addMemberToInternshipChannels,
+} = require("../service/internshipChatService");
 
 /**
  * Helper: build base SELECT with aggregated domains
@@ -1442,6 +1446,44 @@ const getDomainInterns = async (req, res) => {
   }
 };
 
+const getInternshipMentors = async (req, res) => {
+  try {
+    const { internshipId } = req.params;
+
+    if (!internshipId) {
+      return res.status(400).json({ message: "internshipId is required" });
+    }
+
+    const result = await db.query(
+      `
+      SELECT
+        m.id,
+        m.full_name,
+        m.avatar,
+        h.role,
+        h.domain,
+        h.invite_status
+      FROM mentedge.internship_hosts h
+      JOIN mentedge.mentors m ON m.id = h.mentor_id
+      WHERE h.internship_id = $1
+      ORDER BY
+        CASE h.role
+          WHEN 'host' THEN 1
+          WHEN 'co-host' THEN 2
+          ELSE 3
+        END,
+        m.full_name
+      `,
+      [internshipId]
+    );
+
+    return res.status(200).json(result.rows);
+  } catch (err) {
+    console.error("getInternshipMentors error:", err);
+    return res.status(500).json({ message: "Failed to fetch mentors" });
+  }
+};
+
 const uploadConceptFiles = async (req, res) => {
   try {
     console.log(req.files);
@@ -2677,6 +2719,15 @@ const createInternship = async (req, res) => {
       ]
     );
 
+    await ensureChannels(client, internshipId);
+    await addMemberToInternshipChannels(
+      client,
+      internshipId,
+      mentorId,
+      "mentor",
+      host_domain
+    );
+
     await client.query("COMMIT");
 
     const createdResult = await client.query(
@@ -3371,6 +3422,15 @@ const submitCohostDomain = async (req, res) => {
       );
     }
 
+    await ensureChannels(client, internshipId);
+    await addMemberToInternshipChannels(
+      client,
+      internshipId,
+      mentorId,
+      "mentor",
+      myRole.domain
+    );
+
     // 4️⃣ Publish internship now that both domains exist
     await client.query(
       `
@@ -3458,6 +3518,17 @@ const respondCohostInvite = async (req, res) => {
       `,
       [status, internshipId, mentorId]
     );
+
+    if (status === "accepted") {
+      await ensureChannels(client, internshipId);
+      await addMemberToInternshipChannels(
+        client,
+        internshipId,
+        mentorId,
+        "mentor",
+        result.rows[0].domain
+      );
+    }
 
     await client.query("COMMIT");
     return res.json({
@@ -4182,7 +4253,7 @@ const joinInternship = async (req, res) => {
     let domainParams;
     if (domain_id) {
       domainQuery = `
-        SELECT id, internship_id, max_seats, join_count
+        SELECT id, internship_id, domain_name, max_seats, join_count
         FROM mentedge.internship_domains
         WHERE id = $1
         FOR UPDATE
@@ -4190,7 +4261,7 @@ const joinInternship = async (req, res) => {
       domainParams = [domain_id];
     } else {
       domainQuery = `
-        SELECT id, internship_id, max_seats, join_count
+        SELECT id, internship_id, domain_name, max_seats, join_count
         FROM mentedge.internship_domains
         WHERE internship_id = $1 AND domain_name = $2
         FOR UPDATE
@@ -4239,6 +4310,15 @@ const joinInternship = async (req, res) => {
       VALUES ($1, $2, $3)
       `,
       [internId, domain.internship_id, domain.id]
+    );
+
+    await ensureChannels(client, domain.internship_id);
+    await addMemberToInternshipChannels(
+      client,
+      domain.internship_id,
+      internId,
+      "user",
+      domain.domain_name
     );
 
     await client.query(
@@ -4633,6 +4713,7 @@ module.exports = {
   getCurrentMentorWorkboard,
   getInternWorkboard,
   getDomainInterns,
+  getInternshipMentors,
   uploadConceptFiles,
   getConceptFiles,
   deleteConceptFile,

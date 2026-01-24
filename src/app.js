@@ -8,6 +8,7 @@ const passport = require("./config/passportConfig");
 const app = express();
 const routes = require("./routes/routes");
 const internshipRoutes = require("./routes/internshipRoutes");
+const internshipChatRoutes = require("./routes/internshipChatRoutes");
 const chatRoutes = require("./routes/chatRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const { createChatWebSocketServer } = require("./chatSocketServer");
@@ -45,6 +46,7 @@ app.use((req, res, next) => {
 app.use(passport.initialize());
 app.use("/api/auth", routes);
 app.use("/api/internships", internshipRoutes);
+app.use("/api/internships", internshipChatRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/payments", paymentRoutes);
 
